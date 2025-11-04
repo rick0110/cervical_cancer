@@ -11,6 +11,8 @@ import pandas as pd
 
 from model import SwimAD2Net
 from dataset import SimpleImageFolder
+import numpy as np
+from sklearn.metrics import accuracy_score, recall_score, precision_score, f1_score
 
 
 def train_swinad2net(
@@ -25,7 +27,26 @@ def train_swinad2net(
     checkpoint_dir: str = "checkpoints",
     log_dir: str = "runs",
     device: str = "cuda"
-) -> nn.Module:
+):
+    """
+    Função simples de treinamento para o modelo SwinAD2Net.
+    
+    Args:
+        train_df: DataFrame com colunas 'path' (caminho das imagens) e 'label' (rótulos numéricos)
+        val_df: DataFrame de validação (opcional)
+        num_classes: número de classes para classificação
+        image_size: tamanho das imagens (altura e largura)
+        batch_size: tamanho do batch
+        num_epochs: número de épocas de treinamento
+        learning_rate: taxa de aprendizado inicial
+        weight_decay: weight decay para regularização L2
+        checkpoint_dir: diretório para salvar checkpoints
+        log_dir: diretório para logs do TensorBoard
+        device: 'cuda' ou 'cpu'
+    
+    Returns:
+        Tupla (modelo treinado, dicionário de métricas)
+    """
     """
     Função simples de treinamento para o modelo SwinAD2Net.
     
@@ -84,7 +105,7 @@ def train_swinad2net(
         print(f"Train: {len(train_dataset)}\n")
     
     print("Criando modelo SwinAD2Net...")
-    model = SwinAD2Net(num_classes=num_classes, image_size=image_size).to(device)
+    model = SwimAD2Net(num_classes=num_classes, image_size=image_size).to(device)
     print(f"Parâmetros: {sum(p.numel() for p in model.parameters()):,}\n")
     
     criterion = nn.CrossEntropyLoss()
@@ -92,6 +113,7 @@ def train_swinad2net(
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs)
     writer = SummaryWriter(log_dir=log_dir)
     best_val_acc = 0.0
+    history = {'loss_train': [], 'acc_train': [], 'loss_val': [], 'acc_val': []}
     
     for epoch in range(1, num_epochs + 1):
         print(f"\nÉpoca {epoch}/{num_epochs}")
@@ -146,7 +168,12 @@ def train_swinad2net(
             writer.add_scalar('Val/Loss_epoch', val_loss, epoch)
             writer.add_scalar('Val/Accuracy_epoch', val_acc, epoch)
             print(f"Val   - Loss: {val_loss:.4f}, Acc: {val_acc:.2f}%")
-            
+
+            history['loss_train'].append(train_loss)
+            history['acc_train'].append(train_acc)
+            history['loss_val'].append(val_loss)
+            history['acc_val'].append(val_acc)
+
             if val_acc > best_val_acc:
                 best_val_acc = val_acc
                 torch.save({'epoch': epoch, 'model_state_dict': model.state_dict(), 
@@ -168,8 +195,35 @@ def train_swinad2net(
     print(f"Treinamento concluído! | Melhor Val Acc: {best_val_acc:.2f}%")
     print(f"TensorBoard: tensorboard --logdir {log_dir}")
     print(f"{'='*60}\n")
+
+    # Calcular métricas apenas se houver validação
+    scores = {}
+    if val_df is not None and val_loader is not None:
+        val_targets = val_df['label'].values
+        val_predictions = []  # CORRIGIDO: typo val_predinctions
+        
+        model.eval()
+        with torch.no_grad():
+            for inputs, _ in tqdm(val_loader, desc="Predicting", leave=False):
+                inputs = inputs.to(device)
+                outputs = model(inputs)
+                _, predicted = torch.max(outputs.data, 1)
+                val_predictions.extend(predicted.cpu().numpy())
+
+        scores = {
+            'val_accuracy': accuracy_score(val_targets, val_predictions),
+            'val_recall': recall_score(val_targets, val_predictions, average='weighted'),
+            'val_precision': precision_score(val_targets, val_predictions, average='weighted'),
+            'val_f1': f1_score(val_targets, val_predictions, average='weighted')
+        }
+        
+        print(f"\n{'='*60}")
+        print("Métricas de Validação:")
+        for metric, value in scores.items():
+            print(f"  {metric}: {value:.4f}")
+        print(f"{'='*60}\n")
     
-    return model
+    return model, scores
 
 
 if __name__ == '__main__':

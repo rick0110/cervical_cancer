@@ -9,6 +9,8 @@ maps = {
     'intermediate': 0,
     'superficiel': 0
 }
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 paths = []
 for root, dirs, files in os.walk('./../data/data_prepared'):
     for file in files:
@@ -23,7 +25,9 @@ def label_map_from_path(path):
     return np.nan
 
 df['label'] = df['path'].apply(label_map_from_path)
-for i in df.values:
-    print(i)
+
+model
+
+
 
 
