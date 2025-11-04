@@ -48,7 +48,7 @@ for train_index, val_index in k_fold.split(df):
         train_df=df_train,
         val_df=df_val,
         num_classes=2,
-        image_size=(224, 224),
+        image_size=224,
         batch_size=32,
         num_epochs=50,
         learning_rate=1e-3,

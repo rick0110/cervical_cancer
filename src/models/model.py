@@ -13,7 +13,11 @@ class PatchEmb(nn.Module):
 
     def forward(self, x):
         x = self.proj(x)  # [B, embed_dim, H/patch_size, W/patch_size]
+        # LayerNorm espera [B, H, W, C], então permute
+        B, C, H, W = x.shape
+        x = x.permute(0, 2, 3, 1)  # [B, H, W, C]
         x = self.norm(x)
+        x = x.permute(0, 3, 1, 2)  # [B, C, H, W]
         return x
 
 class Adb_SE_Transition(nn.Module):
@@ -33,7 +37,6 @@ class Adb_SE_Transition(nn.Module):
         super(Adb_SE_Transition, self).__init__()
 
         self.adb = AtrousDenseBlock(
-            num_layers=num_layers,
             in_channels=in_channels,
             growth_rate=growth_rate,
         )
@@ -79,20 +82,20 @@ class SwinAD2Net(nn.Module):
         
         # Stage 3: 6x Swin Blocks (14x14)
         ch3 = self.adb_se_trans2.out_channels
-        self.swin_block3_1 = SwinTransformerBlock(in_channels=ch3, input_resolution=(14, 14), number_of_heads=8, window_size=7, shift_size=0)
-        self.swin_block3_2 = SwinTransformerBlock(in_channels=ch3, input_resolution=(14, 14), number_of_heads=8, window_size=7, shift_size=3)
-        self.swin_block3_3 = SwinTransformerBlock(in_channels=ch3, input_resolution=(14, 14), number_of_heads=8, window_size=7, shift_size=0)
-        self.swin_block3_4 = SwinTransformerBlock(in_channels=ch3, input_resolution=(14, 14), number_of_heads=8, window_size=7, shift_size=3)
-        self.swin_block3_5 = SwinTransformerBlock(in_channels=ch3, input_resolution=(14, 14), number_of_heads=8, window_size=7, shift_size=0)
-        self.swin_block3_6 = SwinTransformerBlock(in_channels=ch3, input_resolution=(14, 14), number_of_heads=8, window_size=7, shift_size=3)
+        self.swin_block3_1 = SwinTransformerBlock(in_channels=ch3, input_resolution=(14, 14), number_of_heads=2, window_size=7, shift_size=0)
+        self.swin_block3_2 = SwinTransformerBlock(in_channels=ch3, input_resolution=(14, 14), number_of_heads=2, window_size=7, shift_size=3)
+        self.swin_block3_3 = SwinTransformerBlock(in_channels=ch3, input_resolution=(14, 14), number_of_heads=2, window_size=7, shift_size=0)
+        self.swin_block3_4 = SwinTransformerBlock(in_channels=ch3, input_resolution=(14, 14), number_of_heads=2, window_size=7, shift_size=3)
+        self.swin_block3_5 = SwinTransformerBlock(in_channels=ch3, input_resolution=(14, 14), number_of_heads=2, window_size=7, shift_size=0)
+        self.swin_block3_6 = SwinTransformerBlock(in_channels=ch3, input_resolution=(14, 14), number_of_heads=2, window_size=7, shift_size=3)
         
         # ADB -> SE -> Transition 3
         self.adb_se_trans3 = Adb_SE_Transition(num_layers=4, in_channels=ch3, growth_rate=32, bottleneck=True, theta=0.5, reduction=16)
         
         # Stage 4: 2x Swin Blocks (7x7)
         ch4 = self.adb_se_trans3.out_channels
-        self.swin_block4_1 = SwinTransformerBlock(in_channels=ch4, input_resolution=(7, 7), number_of_heads=8, window_size=7, shift_size=0)
-        self.swin_block4_2 = SwinTransformerBlock(in_channels=ch4, input_resolution=(7, 7), number_of_heads=8, window_size=7, shift_size=3)
+        self.swin_block4_1 = SwinTransformerBlock(in_channels=ch4, input_resolution=(7, 7), number_of_heads=1, window_size=7, shift_size=0)
+        self.swin_block4_2 = SwinTransformerBlock(in_channels=ch4, input_resolution=(7, 7), number_of_heads=1, window_size=7, shift_size=3)
 
         # Global Average Pooling + Classifier
         self.global_pool = nn.AdaptiveAvgPool2d(1)

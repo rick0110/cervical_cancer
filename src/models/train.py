@@ -79,7 +79,7 @@ def train_swinad2net(
     import torchvision.transforms as T
     
     transform_train = T.Compose([
-        T.Resize((image_size, image_size)),
+        T.Resize([image_size, image_size]),  # Usar lista ao invés de tupla
         T.RandomHorizontalFlip(),
         T.RandomRotation(15),
         T.ColorJitter(brightness=0.2, contrast=0.2),
@@ -88,7 +88,7 @@ def train_swinad2net(
     ])
     
     transform_val = T.Compose([
-        T.Resize((image_size, image_size)),
+        T.Resize([image_size, image_size]),  # Usar lista ao invés de tupla
         T.ToTensor(),
         T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
