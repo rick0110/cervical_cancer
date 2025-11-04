@@ -64,7 +64,7 @@ class RandomImageDataset(Dataset):
                 img = self.transform(img)
             return img, label
         else:
-            raise("error: dataset foi inicializado sem DataFrame de amostras.")
+            raise ValueError("Dataset foi inicializado sem DataFrame de amostras.")
 
 
 class SimpleImageFolder(Dataset):
@@ -140,7 +140,7 @@ def prepare_bmp_only(src_dir: str, dst_dir: str = "data_prepared") -> int:
         target_dir = os.path.join(dst_dir, rel_dir) if rel_dir else dst_dir
 
         for fname in filenames:
-            if fname.endswith('.BMP'):
+            if fname.lower().endswith('.bmp'):
                 os.makedirs(target_dir, exist_ok=True)
                 src_path = os.path.join(dirpath, fname)
                 dst_path = os.path.join(target_dir, fname)
@@ -163,20 +163,19 @@ def augment_data_prepared(data_dir: str = "data_prepared",
     
     for root, dirs, files in os.walk(data_dir):
         for fname in files:
-            if '_aug' not in fname:
+            if fname.lower().endswith('.bmp') and '_aug' not in fname:
                 src_path = os.path.join(root, fname)
-                
                 try:
                     img = Image.open(src_path).convert('RGB')
                     base_name, ext = os.path.splitext(fname)
-                    
+
                     for i in range(augmentations_per_image):
                         aug_img = apply_random_augmentation(img)
                         aug_filename = f"{base_name}_aug{i+1}{ext}"
                         aug_path = os.path.join(root, aug_filename)
                         aug_img.save(aug_path)
                         generated += 1
-                        
+
                 except Exception as e:
                     print(f"Erro processando {src_path}: {e}")
                     continue
@@ -239,5 +238,5 @@ def apply_random_augmentation(img: Image.Image) -> Image.Image:
 
 
 if __name__ == '__main__':
-    augment_data_prepared("../data/data_prepared", 5)
+    augment_data_prepared("./../data", 7)
 

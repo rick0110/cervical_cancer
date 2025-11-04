@@ -9,7 +9,7 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 import pandas as pd
 
-from model import SwimAD2Net
+from model import SwinAD2Net
 from dataset import SimpleImageFolder
 import numpy as np
 from sklearn.metrics import accuracy_score, recall_score, precision_score, f1_score
@@ -105,7 +105,7 @@ def train_swinad2net(
         print(f"Train: {len(train_dataset)}\n")
     
     print("Criando modelo SwinAD2Net...")
-    model = SwimAD2Net(num_classes=num_classes, image_size=image_size).to(device)
+    model = SwinAD2Net(num_classes=num_classes, image_size=image_size).to(device)
     print(f"Parâmetros: {sum(p.numel() for p in model.parameters()):,}\n")
     
     criterion = nn.CrossEntropyLoss()
@@ -198,6 +198,8 @@ def train_swinad2net(
 
     # Calcular métricas apenas se houver validação
     scores = {}
+    predictions_dict = {}  # Inicializar vazio para evitar erros quando val_df=None
+    
     if val_df is not None and val_loader is not None:
         val_targets = val_df['label'].values
         val_predictions = []  # CORRIGIDO: typo val_predinctions
@@ -216,14 +218,19 @@ def train_swinad2net(
             'val_precision': precision_score(val_targets, val_predictions, average='weighted'),
             'val_f1': f1_score(val_targets, val_predictions, average='weighted')
         }
-        
+
+        predictions_dict = {
+            'val_labels': val_targets.tolist(),  # Converter para lista para serialização
+            'val_predictions': val_predictions
+        }
+
         print(f"\n{'='*60}")
         print("Métricas de Validação:")
         for metric, value in scores.items():
             print(f"  {metric}: {value:.4f}")
         print(f"{'='*60}\n")
-    
-    return model, scores
+
+    return model, history, scores, predictions_dict
 
 
 if __name__ == '__main__':
