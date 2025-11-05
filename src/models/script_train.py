@@ -17,7 +17,7 @@ maps = {
 
 }
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = "cuda" if torch.cuda.is_available() else "cpu"
 paths = []
 for root, dirs, files in os.walk('./../data'):
     for file in files:
@@ -25,6 +25,8 @@ for root, dirs, files in os.walk('./../data'):
             paths.append(os.path.abspath(os.path.join(root, file)))
 
 df = pd.DataFrame({'path': paths})
+
+print(f'The model is training with {len(df)} data')
 
 def label_map_from_path(path):
     for key in maps.keys():
@@ -40,6 +42,8 @@ k_fold = KFold(n_splits=5, shuffle=True, random_state=42)
 models = {}  #-> model[ state_dict, history{loss_train, acc_train, loss_val, acc_val}, scores{val_acc, val_recall, val_precision}, predictions{val_predictions, val_targets} ]
 fold = 1
 
+model_state_dict = None # torch.load('./checkpoints/kfold_experiment/checkpoint_epoch_50.pth')['model_state_dict']
+
 for train_index, val_index in k_fold.split(df):
     df_train = df.iloc[train_index]
     df_val = df.iloc[val_index]
@@ -50,27 +54,27 @@ for train_index, val_index in k_fold.split(df):
         num_classes=2,
         image_size=224,
         batch_size=32,
-        num_epochs=50,
+        num_epochs=200,
         learning_rate=1e-3,
-        checkpoint_dir='./checkpoints/kfold_experiment'
+        checkpoint_dir='./checkpoints_256_embed/kfold_experiment',
+        device=device,
+        log_dir='runs',
+        state_dict=model_state_dict
     )
-    
     models[f'fold_{fold}'] = [model.state_dict(), history, scores, predictions]
     fold += 1
 
-# Salvar resultados do K-Fold
 os.makedirs('./checkpoints/kfold_experiment', exist_ok=True)
 with open('./checkpoints/kfold_experiment/kfold_results.pkl', 'wb') as f:
     pickle.dump(models, f)
 
 print(f"\n{'='*60}")
-print(f"K-Fold Training Completo!")
-print(f"Resultados salvos em: ./checkpoints/kfold_experiment/kfold_results.pkl")
-print(f"Total de folds: {len(models)}")
+print(f"K-Fold Training Complete!")
+print(f"Results were saved in: ./checkpoints/kfold_experiment/kfold_results.pkl")
+print(f"Total folds: {len(models)}")
 print(f"{'='*60}\n")
 
-# Mostrar resumo das métricas
-print("Resumo das Métricas por Fold:")
+print("Summary of Metrics by Fold:")
 print(f"{'='*60}")
 for fold_name, (state_dict, history, scores, predictions) in models.items():
     print(f"\n{fold_name}:")

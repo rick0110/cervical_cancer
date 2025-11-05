@@ -26,7 +26,8 @@ def train_swinad2net(
     weight_decay: float = 1e-4,
     checkpoint_dir: str = "checkpoints",
     log_dir: str = "runs",
-    device: str = "cuda"
+    device: str = "cuda",
+    state_dict=None
 ):
     """
     Função simples de treinamento para o modelo SwinAD2Net.
@@ -67,7 +68,6 @@ def train_swinad2net(
         Modelo treinado
     """
     
-    device = torch.device(device if torch.cuda.is_available() and device == "cuda" else "cpu")
     print(f"\n{'='*60}")
     print(f"Treinamento do SwinAD2Net")
     print(f"Device: {device} | Classes: {num_classes} | Epochs: {num_epochs}")
@@ -104,9 +104,12 @@ def train_swinad2net(
     else:
         print(f"Train: {len(train_dataset)}\n")
     
-    print("Criando modelo SwinAD2Net...")
+    print("Creating model SwinAD2Net...")
     model = SwinAD2Net(num_classes=num_classes, image_size=image_size).to(device)
-    print(f"Parâmetros: {sum(p.numel() for p in model.parameters()):,}\n")
+    if state_dict:
+        model.load_state_dict(state_dict=state_dict)
+    
+    print(f"Parameters: {sum(p.numel() for p in model.parameters()):,}\n")
     
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
@@ -116,7 +119,7 @@ def train_swinad2net(
     history = {'loss_train': [], 'acc_train': [], 'loss_val': [], 'acc_val': []}
     
     for epoch in range(1, num_epochs + 1):
-        print(f"\nÉpoca {epoch}/{num_epochs}")
+        print(f"\nEpoch {epoch}/{num_epochs}")
         print("-" * 40)
         
         model.train()
@@ -255,7 +258,7 @@ if __name__ == '__main__':
         num_classes=2,
         image_size=224,
         batch_size=16,
-        num_epochs=50,
+        num_epochs=200,
         learning_rate=1e-3
     )
 

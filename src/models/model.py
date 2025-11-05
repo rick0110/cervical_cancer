@@ -63,15 +63,15 @@ class SwinAD2Net(nn.Module):
         super(SwinAD2Net, self).__init__()
         
         # Patch Embedding
-        self.patch_emb = PatchEmb(img_size=image_size, patch_size=4, in_chans=3, embed_dim=128)
+        self.patch_emb = PatchEmb(img_size=image_size, patch_size=4, in_chans=3, embed_dim=256)
         
         # Stage 1: 2x Swin Blocks (56x56)
-        self.swin_block1_1 = SwinTransformerBlock(in_channels=128, input_resolution=(56, 56), number_of_heads=4, window_size=7, shift_size=0)
-        self.swin_block1_2 = SwinTransformerBlock(in_channels=128, input_resolution=(56, 56), number_of_heads=4, window_size=7, shift_size=3)
+        self.swin_block1_1 = SwinTransformerBlock(in_channels=256, input_resolution=(56, 56), number_of_heads=4, window_size=7, shift_size=0)
+        self.swin_block1_2 = SwinTransformerBlock(in_channels=256, input_resolution=(56, 56), number_of_heads=4, window_size=7, shift_size=3)
 
         # ADB -> SE -> Transition 1
-        self.adb_se_trans1 = Adb_SE_Transition(num_layers=4, in_channels=128, growth_rate=32, bottleneck=True, theta=0.5, reduction=16)
-        
+        self.adb_se_trans1 = Adb_SE_Transition(num_layers=4, in_channels=256, growth_rate=32, bottleneck=True, theta=0.5, reduction=16)
+
         # Stage 2: 2x Swin Blocks (28x28)
         ch2 = self.adb_se_trans1.out_channels
         self.swin_block2_1 = SwinTransformerBlock(in_channels=ch2, input_resolution=(28, 28), number_of_heads=4, window_size=7, shift_size=0)
