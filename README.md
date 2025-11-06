@@ -11,18 +11,19 @@ Cervical cancer screening is one of the most effective preventive measures in wo
 Manual cytology inspection, however, is labor-intensive, prone to inter-observer variability, and limited by human fatigue.  
 Automated classification systems can assist pathologists by providing **consistent triage**, **reducing false negatives**, and **accelerating diagnostic workflows**.
 
-This work introduces **SwinAD2Net**, a **hybrid vision architecture** inspired by recent Vision Transformer (ViT) developments and the study by Zhang *et al.* (2025) [[DOI:10.1038/s41598-025-87953-1](https://doi.org/10.1038/s41598-025-87953-1)].  
+This work introduces **SwinAD2Net**, a **hybrid vision architecture** inspired by recent Vision Transformer (ViT) developments and the study by Zhang *et al.* (2025) [[DOI:10.1038/s41598-025-87953-1](https://doi.org/10.1038/s41598-025-87953-1)]. The main objective is to fill the gaps in the work produced by Zhang *et al.* by improving global lattent representation hidden layers.
 The model integrates **Swin Transformer blocks**, **Atrous Dense Blocks (ADB)**, and **Squeeze-and-Excitation (SE)** modules to capture both fine-grained cellular morphology and broad contextual dependencies within each image.
 
 ---
 
 ## Objective
 
-The primary goal of this project is to **build an improved deep-learning architecture** for medical image classification and to achieve **higher diagnostic accuracy** than previously reported approaches in cervical cytology.  
-The specific task addressed is **binary classification** of cervical images:
+The primary goal of this project is to build an improved deep-learning architecture for medical image classification and to achieve higher diagnostic accuracy than previously reported approaches in cervical cytology.  
+The specific task addressed is binary classification of cervical images:
 
 - **Normal** (healthy epithelial or metaplastic cells)  
 - **Abnormal** (atypical, dysplastic, or malignant cells)
+
 
 ---
 
@@ -30,11 +31,11 @@ The specific task addressed is **binary classification** of cervical images:
 
 Two publicly available datasets were used in this study:
 
-- **MDE-Lab Pap Smear Collection** — [https://mde-lab.aegean.gr/index.php/downloads/](https://mde-lab.aegean.gr/index.php/downloads/)  
-- **SIPaKMeD Dataset** — [https://www.cs.uoi.gr/~marina/sipakmed.html](https://www.cs.uoi.gr/~marina/sipakmed.html)
+- **MDE-Lab Pap Smear Collection** — [https://mde-lab.aegean.gr/index.php/downloads/](https://mde-lab.aegean.gr/index.php/downloads/) (4049 images)
+- **SIPaKMeD Dataset** — [https://www.cs.uoi.gr/~marina/sipakmed.html](https://www.cs.uoi.gr/~marina/sipakmed.html) (917 images)
 
-Data augmentation was extensively applied — including rotation, flipping, scaling, color jitter, contrast adjustment, random cropping, and elastic deformation — to improve model generalization and balance class distributions.  
-After augmentation, the total number of training samples reached **54,792 images**.
+Data augmentation was extensively applied (from each image was generated other 7) — including rotation, flipping, scaling, color jitter, contrast adjustment, random cropping, and elastic deformation — to improve model generalization and balance class distributions.  
+After augmentation, the total number of training samples reached **34.762 images**.
 
 ---
 
