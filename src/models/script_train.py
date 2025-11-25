@@ -20,6 +20,7 @@ maps = {
 }
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
+print(f'Using device: {device}')
 paths = []
 for root, dirs, files in os.walk('./../../data'):
     for file in files:

@@ -154,32 +154,61 @@ def prepare_bmp_only(src_dir: str, dst_dir: str = "data_prepared") -> int:
     return copied
 
 
-def augment_data_prepared(data_dir: str = "data_prepared", 
+def augment_data_prepared(data_dir: str = None, 
+                            df_paths = None,
                           augmentations_per_image: int = 3) -> int:
-    if not os.path.isdir(data_dir):
-        raise ValueError(f"data_dir não existe: {data_dir}")
-    
+
     generated = 0
+    if data_dir:
+        if not os.path.isdir(data_dir):
+            raise ValueError(f"data_dir não existe: {data_dir}")
     
-    for root, dirs, files in os.walk(data_dir):
-        for fname in files:
-            if fname.lower().endswith('.bmp') and '_aug' not in fname:
-                src_path = os.path.join(root, fname)
+        for root, dirs, files in os.walk(data_dir):
+            for fname in files:
+                if fname.lower().endswith('.bmp') and '_aug' not in fname:
+                    src_path = os.path.join(root, fname)
+                    try:
+                        img = Image.open(src_path).convert('RGB')
+                        base_name, ext = os.path.splitext(fname)
+
+                        for i in range(augmentations_per_image):
+                            aug_img = apply_random_augmentation(img)
+                            aug_filename = f"{base_name}_aug{i+1}{ext}"
+                            aug_path = os.path.join(root, aug_filename)
+                            aug_img.save(aug_path)
+                            generated += 1
+
+                    except Exception as e:
+                        print(f"Erro processando {src_path}: {e}")
+                        continue
+    elif df_paths is not None and len(df_paths) > 0:
+        paths_aug = []
+        labels_aug = []
+        for _, row in df_paths.iterrows():
+            src_path = str(row['path'])
+            label = int(row['label'])
+            if src_path.lower().endswith('.bmp') and '_aug' not in src_path:
                 try:
                     img = Image.open(src_path).convert('RGB')
-                    base_name, ext = os.path.splitext(fname)
+                    base_name, ext = os.path.splitext(os.path.basename(src_path))
 
                     for i in range(augmentations_per_image):
                         aug_img = apply_random_augmentation(img)
                         aug_filename = f"{base_name}_aug{i+1}{ext}"
-                        aug_path = os.path.join(root, aug_filename)
+                        aug_path = os.path.join(os.path.dirname(src_path), aug_filename)
                         aug_img.save(aug_path)
+                        paths_aug.append(aug_path)
+                        labels_aug.append(label)
                         generated += 1
 
                 except Exception as e:
                     print(f"Erro processando {src_path}: {e}")
-                    continue
-    
+
+        df_aug = pd.DataFrame({'path': paths_aug, 'label': labels_aug})
+        df_paths = pd.concat([df_paths.reset_index(drop=True), df_aug], ignore_index=True)
+        return generated, paths_aug, df_paths
+
+
     return generated
 
 

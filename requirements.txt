@@ -10,3 +10,4 @@ timm
 tensorboard
 requests
 py7zr
+matplotlib
