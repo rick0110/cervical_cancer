@@ -20,6 +20,10 @@ def train_swinad2net(
     val_df: Optional[pd.DataFrame] = None,
     num_classes: int = 2,
     image_size: int = 224,
+    embed_dim: int = 128,
+    growth_rate: int = 32,
+    dilation_rates: list = [1, 2, 3],
+    patch_size_embed: int = 4,
     batch_size: int = 16,
     num_epochs: int = 50,
     learning_rate: float = 1e-3,
@@ -94,18 +98,23 @@ def train_swinad2net(
     ])
     
     train_dataset = SimpleImageFolder(df=train_df, transform=transform_train)
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0, pin_memory=False)
     
     val_loader = None
     if val_df is not None:
         val_dataset = SimpleImageFolder(df=val_df, transform=transform_val)
-        val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
+        val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=False)
         print(f"Train: {len(train_dataset)} | Val: {len(val_dataset)}\n")
     else:
         print(f"Train: {len(train_dataset)}\n")
     
     print("Creating model SwinAD2Net...")
-    model = SwinAD2Net(num_classes=num_classes, image_size=image_size).to(device)
+    model = SwinAD2Net(num_classes=num_classes,
+                       embed_dim=embed_dim,
+                       image_size=image_size,
+                       patch_size_embed=patch_size_embed,
+                       growth_rate=growth_rate,
+                       dilation_rates=dilation_rates).to(device)
     if state_dict:
         model.load_state_dict(state_dict=state_dict)
     

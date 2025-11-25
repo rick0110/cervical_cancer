@@ -185,6 +185,7 @@ class AtrousDenseBlock(nn.Module):
         channels = in_channels
         for d in dilation_rates:
             layers += [
+                nn.Conv2d(channels, channels, kernel_size=1, bias=False),
                 nn.BatchNorm2d(channels),
                 nn.ReLU(inplace=True),
                 nn.Conv2d(channels, growth_rate, kernel_size=3, padding=d, dilation=d, bias=False)
@@ -193,23 +194,13 @@ class AtrousDenseBlock(nn.Module):
         self.layers = nn.ModuleList(layers)
         self.out_channels = channels
 
-        # SE module
-        self.se = nn.Sequential(
-            nn.AdaptiveAvgPool2d(1),
-            nn.Conv2d(self.out_channels, self.out_channels // 16, kernel_size=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(self.out_channels // 16, self.out_channels, kernel_size=1),
-            nn.Sigmoid()
-        )
-
     def forward(self, x):
         features = [x]
-        for i in range(0, len(self.layers), 3):
-            bn, relu, conv = self.layers[i:i+3]
-            new_feat = conv(relu(bn(torch.cat(features, 1))))
+        for i in range(0, len(self.layers), 4):
+            conv0, bn, relu, conv = self.layers[i:i+4]
+            new_feat = conv(relu(conv0(bn(torch.cat(features, 1)))))
             features.append(new_feat)
         out = torch.cat(features, 1)
-        out = out * self.se(out)
         return out
 
 class DenseNet(nn.Module):
@@ -660,8 +651,8 @@ class SwinTransformerBlock(nn.Module):
                  window_size: int = 7,
                  shift_size: int = 0,
                  ff_feature_ratio: int = 4,
-                 dropout: float = 0.0,
-                 dropout_attention: float = 0.0,
+                 dropout: float = 0.1,
+                 dropout_attention: float = 0.1,
                  dropout_path: float = 0.0,
                  sequential_self_attention: bool = False) -> None:
         """

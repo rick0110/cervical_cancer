@@ -8,4 +8,5 @@ scikit-learn
 pytest
 timm
 tensorboard
-
+requests
+py7zr

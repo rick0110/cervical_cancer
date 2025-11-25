@@ -9,24 +9,24 @@ import pickle
 maps = {
     'carcinoma': 1,
     'dysplastic': 1,
+    'koilocytotic': 1,
+    'dyskeratotic': 1,
     'metaplastic': 0,
     'columnar': 0,
-    'intermediate': 0,
-    'superficiel': 0,
+    'normal-intermediate': 0,
+    'superficial': 0,
     'parabasal': 0,
 
 }
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 paths = []
-for root, dirs, files in os.walk('./../data'):
+for root, dirs, files in os.walk('./../../data'):
     for file in files:
         if file.lower().endswith('.bmp'):
             paths.append(os.path.abspath(os.path.join(root, file)))
 
 df = pd.DataFrame({'path': paths})
-
-print(f'The model is training with {len(df)} data')
 
 def label_map_from_path(path):
     for key in maps.keys():
@@ -36,6 +36,9 @@ def label_map_from_path(path):
 
 df['label'] = df['path'].apply(label_map_from_path)
 df = df.sample(frac=1, random_state=847).dropna().reset_index(drop=True)
+
+print(f'The model is training with {len(df)} data')
+print(f'Class distribution:\n{df["label"].value_counts()}')
 
 k_fold = KFold(n_splits=5, shuffle=True, random_state=42)
 
@@ -53,6 +56,9 @@ for train_index, val_index in k_fold.split(df):
         val_df=df_val,
         num_classes=2,
         image_size=224,
+        embed_dim=128,
+        growth_rate=32,
+        dilation_rates=[1, 2, 3],
         batch_size=32,
         num_epochs=200,
         learning_rate=1e-3,
