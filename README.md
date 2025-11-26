@@ -79,31 +79,54 @@ and "excitation", which captures channel-wise dependencies through a bottleneck 
 - **Transition Layers** — down-sampling between stages. Transition layers are used to reduce the spatial and channel dimensions of feature maps between ADB and Transformer-blocks stages of this network. This is achieved through a convolutional layer with kernel size 1 and an average pooling layer with stride greater than one. A parameter $\theta$ is set to be the decrease rate of the number of channels and sptial resolution ($\theta = 0.5$ in our model). A Batch Normalization followed by ReLU activation is applied and finally it is passed through a convolutional layer with kernel size 1 that maps the channel feature map to $\theta$ times the input size. Then, an average pooling with kernel and stride sizes $\dfrac{1}{\theta}$ is apllied. By down-sampling the feature maps, transition layers help to decrease computational complexity and memory usage, while also allowing the network to learn more abstract representations at deeper levels. In SwinAD2Net, transition layers are placed after certain stages to effectively manage the resolution of feature maps as they progress through the network.
 ![Transition layer](./img/Transition_layer.png)
 
-- **Global Average Pooling + Linear Classifier** - final prediction layer. After the feature extraction stages, a global average pooling layer is applied to reduce each feature map to a single value by averaging over all spatial locations. This results in a fixed-size feature vector regardless of the input image size. This vector is then passed through a fully connected linear layer that maps it to the desired number of output classes for classification. The linear classifier produces the final predictions by applying a softmax activation (for multi-class classification) or sigmoid activation (for binary classification) to obtain class probabilities.
+- **Global Average Pooling + Linear Classifier** - final prediction layer. After the feature extraction stages, a global average pooling layer is applied to reduce each spatial feature map to a single value by averaging over all spatial locations so that $Z_c = \frac{1}{H \times W} \sum_{i=1}^{H} \sum_{j=1}^{W} U_{c}(i, j)$. This results in a fixed-size feature vector regardless of the input image size. This vector is then passed through a fully connected linear layer that maps it to the desired number of output classes for classification. The linear classifier produces the final predictions by applying a softmax activation (for multi-class classification) to obtain class probabilities.
 
-This hybrid design merges **transformer-level contextual reasoning** with **CNN-style dense connectivity**, enabling rich spatial and semantic representation learning.
+This hybrid design merges **transformer-level contextual reasoning** with **CNN-style dense connectivity**, enabling rich spatial and semantic representation learning. 
 
 ---
+## Evaluation
+
+The model was evaluated using standard classification metrics. We performed experiments on both datasets using **5-fold cross-validation** to ensure robustness and generalizability. The first experiment was binary classification between normal and abnormal cells using the two datasets. The primary metrics used for evaluation included:
+- **Accuracy (Acc)**: $Acc = \frac{TP + TN}{TP + FN + TN + FP}$
+- **Precision (Pre)**: $Pre = \frac{TP}{TP + FP}$
+- **Specificity (Spe)**: $Spe = \frac{TN}{TN + FP}$
+- **Recall (Rec)**: $Rec = \frac{TP}{TP + FN}$
+- **F1-Score**: $F1\text{-}Score = 2 \times \frac{Pre \times Rec}{Pre + Rec} = \frac{2TP}{2TP + FN + FP}$
+
+Accuracy measures the overall correctness of the model, precision quantifies the accuracy of positive predictions, specificity assesses the model's ability to identify negative cases, recall evaluates the model's sensitivity to positive cases, and F1-Score provides a balance between precision and recall.
+These metrics provide a comprehensive assessment of the model's performance in correctly identifying both normal and abnormal cervical cells. For multi-class classification, we used the same metrics calculated for each class and then averaged (macro average) to get an overall performance measure.
+
+### Results
+The experiments were conducted using an **NVIDIA RTX A4500 (20 GB)** GPU and in each fold, we used **batch size of 32** and trained for **700 epochs**. The learning rate was initialized at **0.001** and decayed using a cosine annealing schedule. The optimizer used was **AdamW** with weight decay of **0.01**. The loss function employed was **Cross-Entropy Loss**. 
+
 
 ## Implementation
 
 The repository is implemented in **PyTorch** and includes:
 
-- `src/models/model.py` — SwinAD2Net architecture definition  
-- `src/models/layers.py` — supporting layers (ADB, SE, transitions, Swin blocks)  
-- `src/models/train.py` — training utilities with TensorBoard logging and checkpointing  
-- `src/models/script_train.py` — example K-Fold cross-validation pipeline  
-- `src/models/dataset.py` — dataset utilities and augmentation helpers  
-- `tests/test_model.py` — minimal verification tests  
+- `src/models/model.py` - **SwinAD2Net Architecture**: Defines the core `SwinAD2Net` class, which integrates Swin Transformer blocks with Atrous Dense Blocks (ADB) and Squeeze-and-Excitation (SE) modules. It also includes the `PatchEmb` for initial image embedding and the `Adb_SE_Transition` module that combines the dense feature extraction with channel attention and downsampling.
+- `src/models/layers.py` - **Custom Layers**: Implements the building blocks of the network, including:
+    - `AtrousDenseBlock`: A dense block variant using dilated convolutions for multi-scale feature extraction.
+    - `TransitionLayer`: Handles downsampling and channel reduction between stages.
+    - `SwinTransformerBlock`: Wrappers or implementations for the Swin Transformer attention mechanism.
+    
+- `src/models/train.py` - **Training Engine**: Contains the `train_swinad2net` function, which manages the full training loop. It handles:
+    - Data loading via PyTorch `DataLoader`.
+    - Loss computation and backpropagation.
+    - Logging training progress to **TensorBoard**.
+    - Model checkpointing.
+- `src/models/script_train.py` - **Training Script**: An example script to execute the training pipeline, demonstrating how to set up the dataset, hyperparameters, and initiate the training process, potentially including K-Fold cross-validation logic.
+- `src/models/dataset.py` - **Data Loading**: Implements `RandomImageDataset` (and potentially others), a custom PyTorch `Dataset` class that handles image loading from file paths (via a DataFrame) or generates synthetic data for testing. It integrates with `torchvision.transforms` for data augmentation.
+- `tests/` - **Unit Tests**:
+    - `test_model_full.py`: Verifies the `SwinAD2Net` model instantiation and forward pass with expected input shapes.
+    - `test_layers.py`: Tests individual layers like `AtrousDenseBlock` and `TransitionLayer` to ensure correct output dimensions.
+    - `test_dataset.py`: Validates data loading and transformation logic.
 
-Training supports **mixed precision (AMP)** and **gradient checkpointing** for GPU memory optimization.  
-Experiments were conducted using an **NVIDIA RTX A4500 (20 GB)** GPU.
 
----
+References:
 
-## ⚡ Setup
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+ - Zhang, Y., et al. (2025). An automatic cervical cell
+classification model based on
+improved DenseNet121. [https://www.nature.com/articles/s41598-025-87953-1](https://www.nature.com/articles/s41598-025-87953-1).
+ - Liu, Z., et al. (2021). Swin Transformer: Hierarchical Vision Transformer using Shifted Windows. [https://arxiv.org/pdf/2103.14030](https://arxiv.org/pdf/2103.14030).
+- Huang, G., et al. (2016). Densely Connected Convolutional Networks. [https://arxiv.org/abs/1608.06993](https://arxiv.org/abs/1608.06993).
