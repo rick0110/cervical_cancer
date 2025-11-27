@@ -179,28 +179,25 @@ class TransitionLayer(nn.Module):
         return out
 
 class AtrousDenseBlock(nn.Module):
+    """
+    Optimized Atrous Block with parallel branches (ASPP-like) for speed.
+    Replaces the sequential DenseNet-like structure to allow parallel execution.
+    """
     def __init__(self, in_channels, growth_rate, dilation_rates=[1, 2, 3]):
         super().__init__()
-        layers = []
-        channels = in_channels
+        self.branches = nn.ModuleList()
         for d in dilation_rates:
-            layers += [
-                nn.Conv2d(channels, channels, kernel_size=1, bias=False),
-                nn.BatchNorm2d(channels),
-                nn.ReLU(inplace=True),
-                nn.Conv2d(channels, growth_rate, kernel_size=3, padding=d, dilation=d, bias=False)
-            ]
-            channels += growth_rate  # concat like DenseNet
-        self.layers = nn.ModuleList(layers)
-        self.out_channels = channels
+            self.branches.append(nn.Sequential(
+                nn.Conv2d(in_channels, growth_rate, kernel_size=3, padding=d, dilation=d, bias=False),
+                nn.BatchNorm2d(growth_rate),
+                nn.ReLU(inplace=True)
+            ))
+        self.out_channels = in_channels + len(dilation_rates) * growth_rate
 
     def forward(self, x):
-        features = [x]
-        for i in range(0, len(self.layers), 4):
-            conv0, bn, relu, conv = self.layers[i:i+4]
-            new_feat = conv(relu(conv0(bn(torch.cat(features, 1)))))
-            features.append(new_feat)
-        out = torch.cat(features, 1)
+        # Parallel execution of branches
+        branch_outputs = [branch(x) for branch in self.branches]
+        out = torch.cat([x] + branch_outputs, 1)
         return out
 
 class DenseNet(nn.Module):
@@ -392,14 +389,12 @@ def unfold(input: torch.Tensor,
     :param window_size: (int) Window size to be applied
     :return: (torch.Tensor) Unfolded tensor of the shape [batch size * windows, channels, window size, window size]
     """
-    # Get original shape
-    _, channels, height, width = input.shape 
-    # Unfold input
-    output: torch.Tensor = input.unfold(dimension=3, size=window_size, step=window_size) \
-        .unfold(dimension=2, size=window_size, step=window_size)
-    # Reshape to [batch size * windows, channels, window size, window size]
-    output: torch.Tensor = output.permute(0, 2, 3, 1, 5, 4).reshape(-1, channels, window_size, window_size)
-    return output
+    B, C, H, W = input.shape
+    # [B, C, H, W] -> [B, C, H//ws, ws, W//ws, ws]
+    x = input.view(B, C, H // window_size, window_size, W // window_size, window_size)
+    # -> [B, H//ws, W//ws, C, ws, ws] -> [B*num_windows, C, ws, ws]
+    x = x.permute(0, 2, 4, 1, 3, 5).contiguous().view(-1, C, window_size, window_size)
+    return x
 
 
 def fold(input: torch.Tensor,
@@ -414,15 +409,11 @@ def fold(input: torch.Tensor,
     :param width: (int) Width of the feature map
     :return: (torch.Tensor) Folded output tensor of the shape [batch size, channels, height, width]
     """
-    # Get channels of windows
-    channels: int = input.shape[1]
-    # Get original batch size
-    batch_size: int = int(input.shape[0] // (height * width // window_size // window_size))
-    # Reshape input to
-    output: torch.Tensor = input.view(batch_size, height // window_size, width // window_size, channels,
-                                      window_size, window_size)
-    output: torch.Tensor = output.permute(0, 3, 1, 4, 2, 5).reshape(batch_size, channels, height, width)
-    return output
+    B_windows, C, ws, ws = input.shape
+    batch_size = int(B_windows // (height * width // window_size // window_size))
+    x = input.view(batch_size, height // window_size, width // window_size, C, window_size, window_size)
+    x = x.permute(0, 3, 1, 4, 2, 5).contiguous().view(batch_size, C, height, width)
+    return x
 
 
 class WindowMultiHeadAttention(nn.Module):
@@ -514,95 +505,6 @@ class WindowMultiHeadAttention(nn.Module):
                                                                               self.window_size * self.window_size)
         return relative_position_bias.unsqueeze(0)
 
-    def __self_attention(self,
-                         query: torch.Tensor,
-                         key: torch.Tensor,
-                         value: torch.Tensor,
-                         batch_size_windows: int,
-                         tokens: int,
-                         mask: Optional[torch.Tensor] = None) -> torch.Tensor:
-        """
-        This function performs standard (non-sequential) scaled cosine self-attention
-        :param query: (torch.Tensor) Query tensor of the shape [batch size * windows, heads, tokens, channels // heads]
-        :param key: (torch.Tensor) Key tensor of the shape [batch size * windows, heads, tokens, channels // heads]
-        :param value: (torch.Tensor) Value tensor of the shape [batch size * windows, heads, tokens, channels // heads]
-        :param batch_size_windows: (int) Size of the first dimension of the input tensor (batch size * windows)
-        :param tokens: (int) Number of tokens in the input
-        :param mask: (Optional[torch.Tensor]) Attention mask for the shift case
-        :return: (torch.Tensor) Output feature map of the shape [batch size * windows, tokens, channels]
-        """
-        # Compute attention map with scaled cosine attention
-        attention_map: torch.Tensor = torch.einsum("bhqd, bhkd -> bhqk", query, key) \
-                                      / torch.maximum(torch.norm(query, dim=-1, keepdim=True)
-                                                      * torch.norm(key, dim=-1, keepdim=True).transpose(-2, -1),
-                                                      torch.tensor(1e-06, device=query.device, dtype=query.dtype))
-        attention_map: torch.Tensor = attention_map / self.tau.clamp(min=0.01)
-        # Apply relative positional encodings
-        attention_map: torch.Tensor = attention_map + self.__get_relative_positional_encodings()
-        # Apply mask if utilized
-        if mask is not None:
-            number_of_windows: int = mask.shape[0]
-            attention_map: torch.Tensor = attention_map.view(batch_size_windows // number_of_windows, number_of_windows,
-                                                             self.number_of_heads, tokens, tokens)
-            attention_map: torch.Tensor = attention_map + mask.unsqueeze(1).unsqueeze(0)
-            attention_map: torch.Tensor = attention_map.view(-1, self.number_of_heads, tokens, tokens)
-        attention_map: torch.Tensor = attention_map.softmax(dim=-1)
-        # Perform attention dropout
-        attention_map: torch.Tensor = self.attention_dropout(attention_map)
-        # Apply attention map and reshape
-        output: torch.Tensor = torch.einsum("bhal, bhlv -> bhav", attention_map, value)
-        output: torch.Tensor = output.permute(0, 2, 1, 3).reshape(batch_size_windows, tokens, -1)
-        return output
-
-    def __sequential_self_attention(self,
-                                    query: torch.Tensor,
-                                    key: torch.Tensor,
-                                    value: torch.Tensor,
-                                    batch_size_windows: int,
-                                    tokens: int,
-                                    mask: Optional[torch.Tensor] = None) -> torch.Tensor:
-        """
-        This function performs sequential scaled cosine self-attention
-        :param query: (torch.Tensor) Query tensor of the shape [batch size * windows, heads, tokens, channels // heads]
-        :param key: (torch.Tensor) Key tensor of the shape [batch size * windows, heads, tokens, channels // heads]
-        :param value: (torch.Tensor) Value tensor of the shape [batch size * windows, heads, tokens, channels // heads]
-        :param batch_size_windows: (int) Size of the first dimension of the input tensor (batch size * windows)
-        :param tokens: (int) Number of tokens in the input
-        :param mask: (Optional[torch.Tensor]) Attention mask for the shift case
-        :return: (torch.Tensor) Output feature map of the shape [batch size * windows, tokens, channels]
-        """
-        # Init output tensor
-        output: torch.Tensor = torch.ones_like(query)
-        # Compute relative positional encodings fist
-        relative_position_bias: torch.Tensor = self.__get_relative_positional_encodings()
-        # Iterate over query and key tokens
-        for token_index_query in range(tokens):
-            # Compute attention map with scaled cosine attention
-            attention_map: torch.Tensor = \
-                torch.einsum("bhd, bhkd -> bhk", query[:, :, token_index_query], key) \
-                / torch.maximum(torch.norm(query[:, :, token_index_query], dim=-1, keepdim=True)
-                                * torch.norm(key, dim=-1, keepdim=False),
-                                torch.tensor(1e-06, device=query.device, dtype=query.dtype))
-            attention_map: torch.Tensor = attention_map / self.tau.clamp(min=0.01)[..., 0]
-            # Apply positional encodings
-            attention_map: torch.Tensor = attention_map + relative_position_bias[..., token_index_query, :]
-            # Apply mask if utilized
-            if mask is not None:
-                number_of_windows: int = mask.shape[0]
-                attention_map: torch.Tensor = attention_map.view(batch_size_windows // number_of_windows,
-                                                                 number_of_windows, self.number_of_heads, 1,
-                                                                 tokens)
-                attention_map: torch.Tensor = attention_map \
-                                              + mask.unsqueeze(1).unsqueeze(0)[..., token_index_query, :].unsqueeze(3)
-                attention_map: torch.Tensor = attention_map.view(-1, self.number_of_heads, tokens)
-            attention_map: torch.Tensor = attention_map.softmax(dim=-1)
-            # Perform attention dropout
-            attention_map: torch.Tensor = self.attention_dropout(attention_map)
-            # Apply attention map and reshape
-            output[:, :, token_index_query] = torch.einsum("bhl, bhlv -> bhv", attention_map, value)
-        output: torch.Tensor = output.permute(0, 2, 1, 3).reshape(batch_size_windows, tokens, -1)
-        return output
-
     def forward(self,
                 input: torch.Tensor,
                 mask: Optional[torch.Tensor] = None) -> torch.Tensor:
@@ -615,27 +517,59 @@ class WindowMultiHeadAttention(nn.Module):
         # Save original shape
         batch_size_windows, channels, height, width = input.shape
         tokens: int = height * width
-        # Reshape input to [batch size * windows, tokens (height * width), channels]
-        input: torch.Tensor = input.reshape(batch_size_windows, channels, tokens).permute(0, 2, 1)
+        
+        # Reshape input to [batch size * windows, tokens, channels]
+        x = input.view(batch_size_windows, channels, tokens).permute(0, 2, 1)
+        
         # Perform query, key, and value mapping
-        query_key_value: torch.Tensor = self.mapping_qkv(input)
-        query_key_value: torch.Tensor = query_key_value.view(batch_size_windows, tokens, 3, self.number_of_heads,
-                                                             channels // self.number_of_heads).permute(2, 0, 3, 1, 4)
-        query, key, value = query_key_value[0], query_key_value[1], query_key_value[2]
-        # Perform attention
-        if self.sequential_self_attention:
-            output: torch.Tensor = self.__sequential_self_attention(query=query, key=key, value=value,
-                                                                    batch_size_windows=batch_size_windows,
-                                                                    tokens=tokens,
-                                                                    mask=mask)
-        else:
-            output: torch.Tensor = self.__self_attention(query=query, key=key, value=value,
-                                                         batch_size_windows=batch_size_windows, tokens=tokens,
-                                                         mask=mask)
+        qkv = self.mapping_qkv(x)
+        # [Bw, tokens, 3*C] -> [Bw, tokens, 3, num_heads, head_dim]
+        qkv = qkv.view(batch_size_windows, tokens, 3, self.number_of_heads, channels // self.number_of_heads)
+        # Permute to [3, Bw, num_heads, tokens, head_dim]
+        qkv = qkv.permute(2, 0, 3, 1, 4)
+        query, key, value = qkv[0], qkv[1], qkv[2]
+        
+        # Normalize query and key for cosine attention
+        query = F.normalize(query, p=2, dim=-1, eps=1e-06)
+        key = F.normalize(key, p=2, dim=-1, eps=1e-06)
+        
+        # Scale query by 1/tau
+        # tau: [1, num_heads, 1, 1] -> [1, num_heads, 1, 1]
+        tau = self.tau.clamp(min=0.01)
+        query = query / tau
+        
+        # Prepare attention mask
+        # relative_position_bias: [1, num_heads, tokens, tokens]
+        attn_mask = self.__get_relative_positional_encodings()
+        
+        if mask is not None:
+            # mask: [num_windows, tokens, tokens]
+            # We need to expand mask to match batch size
+            nw = mask.shape[0]
+            bs = batch_size_windows // nw
+            # [nw, tokens, tokens] -> [nw, 1, tokens, tokens] -> [bs*nw, 1, tokens, tokens]
+            mask_expanded = mask.unsqueeze(1).repeat(bs, 1, 1, 1)
+            attn_mask = attn_mask + mask_expanded
+            
+        # Perform Scaled Dot Product Attention
+        # SDPA expects [Batch, Heads, Tokens, Head_Dim]
+        # attn_mask is broadcastable
+        output = F.scaled_dot_product_attention(
+            query, key, value, 
+            attn_mask=attn_mask, 
+            dropout_p=self.attention_dropout.p if self.training else 0.0,
+            scale=1.0
+        )
+        
+        # Reshape output
+        # [Bw, num_heads, tokens, head_dim] -> [Bw, tokens, num_heads, head_dim] -> [Bw, tokens, C]
+        output = output.permute(0, 2, 1, 3).reshape(batch_size_windows, tokens, channels)
+        
         # Perform linear mapping and dropout
-        output: torch.Tensor = self.projection_dropout(self.projection(output))
+        output = self.projection_dropout(self.projection(output))
+        
         # Reshape output to original shape [batch size * windows, channels, height, width]
-        output: torch.Tensor = output.permute(0, 2, 1).view(batch_size_windows, channels, height, width)
+        output = output.permute(0, 2, 1).view(batch_size_windows, channels, height, width)
         return output
 
 
