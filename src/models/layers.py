@@ -3,152 +3,27 @@ from torch import nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 from math import floor, sqrt
-from typing import Tuple, Optional, List, Union, Any
 import torch.utils.checkpoint as checkpoint
 import timm
+from typing import Tuple, Optional, List, Union, Any
 
-__all__: List[str] = ["SwinTransformerStage", "SwinTransformerBlock", "DeformableSwinTransformerBlock"]
-
-
-class StemLayer(nn.Module):
-    def __init__(self, in_channels=3, out_channels=64):
-        super(StemLayer, self).__init__()
-        self.stem = nn.Sequential(
-            nn.Conv2d(
-                in_channels=in_channels,  
-                out_channels=out_channels,
-                kernel_size=3,         
-                stride=1,
-                padding=1,
-                bias=False
-            ),
-            
-            nn.BatchNorm2d(out_channels),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(
-                kernel_size=2,          
-                stride=2,
-                padding=0
-            )
-        )
-
-    def forward(self, x):
-        return self.stem(x)
-
-class SubBlock(nn.Module):
-    """
-    This piece of the DenseBlock receives an input feature map
-    x and transforms it through a dense, composite function H(x).
-
-    The transformation H(x) is a composition of 3 consecutive 
-    operations: BN - ReLU - Conv (3x3).
-
-    In the bottleneck variant of the SubBlock, a 1x1 conv is
-    added to the transformation function H(x), reducing the number
-    of input feature maps and improving computational efficiency.
-    """
-    def __init__(self, in_channels, out_channels, bottleneck, p):
-        """
-        Initialize the different parts of the SubBlock.
-
-        Params
-        ------
-        - in_channels: number of input channels in the convolution.
-        - out_channels: number of output channels in the convolution.
-        - bottleneck: if true, applies the bottleneck variant of H(x).
-        - p: if greater than 0, applies dropout after the convolution.
-        """
-        super(SubBlock, self).__init__()
-        self.bottleneck = bottleneck
-        self.p = p
-
-        in_channels_2 = in_channels
-        out_channels_2 = out_channels
-
-        if bottleneck:
-            in_channels_1 = in_channels
-            out_channels_1 = out_channels * 4
-            in_channels_2 = out_channels_1
-
-            self.bn1 = nn.BatchNorm2d(in_channels_1)
-            self.conv1 = nn.Conv2d(in_channels_1,
-                                   out_channels_1,
-                                   kernel_size=1)
-
-        self.bn2 = nn.BatchNorm2d(in_channels_2)
-        self.conv2 = nn.Conv2d(in_channels_2, 
-                               out_channels_2, 
-                               kernel_size=3, 
-                               padding=1)
-
-    def forward(self, x):
-        """
-        Compute the forward pass of the composite transformation H(x),
-        where x is the concatenation of the current and all preceding
-        feature maps.
-        """
-        if self.bottleneck:
-            out = self.conv1(F.relu(self.bn1(x)))
-            if self.p > 0:
-                out = F.dropout(out, p=self.p, training=self.training)
-            out = self.conv2(F.relu(self.bn2(out)))
-            if self.p > 0:
-                out = F.dropout(out, p=self.p, training=self.training)
-        else:
-            out = self.conv2(F.relu(self.bn2(x)))
-            if self.p > 0:
-                out = F.dropout(out, p=self.p, training=self.training)  
-        return torch.cat((x, out), 1)
-
-class DenseBlock(nn.Module):
-    """
-    Block that connects L layers directly with each other in a 
-    feed-forward fashion.
-
-    Concretely, this block is composed of L SubBlocks sharing a 
-    common growth rate k (Figure 1 in the paper).
-    """
-    def __init__(self, num_layers, in_channels, growth_rate, bottleneck, p):
-        """
-        Initialize the different parts of the DenseBlock.
-
-        Params
-        ------
-        - num_layers: the number of layers L in the dense block.
-        - in_channels: the number of input channels feeding into the first 
-          subblock.
-        - growth_rate: the number of output feature maps produced by each subblock.
-          This number is common across all subblocks.
-        """
-        super(DenseBlock, self).__init__()
-
-        # create L subblocks
-        layers = []
-        for i in range(num_layers):
-            cumul_channels = in_channels + i * growth_rate
-            layers.append(SubBlock(cumul_channels, growth_rate, bottleneck, p))
-
-        self.block = nn.Sequential(*layers)
-        self.out_channels = cumul_channels + growth_rate
-
-    def forward(self, x):
-        """
-        Feed the input feature map x through the L subblocks 
-        of the DenseBlock.
-        """
-        out = self.block(x)
-        return out
+__all__: List[str] = ["SwinTransformerStage", "SwinTransformerBlock", "DeformableSwinTransformerBlock", ]
 
 class TransitionLayer(nn.Module):
     """
-    This layer is placed between consecutive Dense blocks. 
+    In SwinAD2Net, this layer is placed between consecutive Dense blocks. 
     It allows the network to downsample the size of feature 
     maps using the pooling operator.
 
     Concretely, this layer is a composition of 3 operations:
     BN - Conv (1x1) - AveragePool
     
-    Additionally, this layer can perform compression by reducing
+    This layer first applies Batch Normalization followed by a ReLU activation.
+    Then, a 1x1 convolution is applied to change the number of feature maps, 
+    mapping from in_channels to theta * in_channels.
+    Finally, an Average Pooling operation with kernel size 2 is applied to downsample the spatial dimensions.
+    
+    This layer can perform compression by reducing
     the number of output feature maps using a compression factor
     theta.
     """
@@ -159,8 +34,8 @@ class TransitionLayer(nn.Module):
         Params
         ------
         - in_channels: number of input channels.
-        - theta: compression factor in the range [0, 1]. Set to 0.5
-          in the paper when using DenseNet-BC.
+        - theta: compression factor in the range [0, 1]. Set to 0.5 in SwinAD2Net presented in https://github.com/rick0110/cervical_cancer.
+        - p: dropout rate.
         """
         super(TransitionLayer, self).__init__()
         self.p = p
@@ -177,8 +52,33 @@ class TransitionLayer(nn.Module):
         if self.p > 0:
             out = F.dropout(out, p=self.p, training=self.training)
         return out
-
+    
 class AtrousDenseBlock(nn.Module):
+    def __init__(self, in_channels, growth_rate, dilation_rates=[1, 2, 3]):
+        super().__init__()
+        layers = []
+        channels = in_channels
+        for d in dilation_rates:
+            layers += [
+                nn.Conv2d(channels, channels, kernel_size=1, bias=False),
+                nn.BatchNorm2d(channels),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(channels, growth_rate, kernel_size=3, padding=d, dilation=d, bias=False)
+            ]
+            channels += growth_rate 
+        self.layers = nn.ModuleList(layers)
+        self.out_channels = channels
+
+    def forward(self, x):
+        features = [x]
+        for i in range(0, len(self.layers), 4):
+            conv0, bn, relu, conv = self.layers[i:i+4]
+            new_feat = conv(relu(conv0(bn(torch.cat(features, 1)))))
+            features.append(new_feat)
+        out = torch.cat(features, 1)
+        return out
+
+class AtrousDenseBlock_ASPP_like(nn.Module):
     """
     Optimized Atrous Block with parallel branches (ASPP-like) for speed.
     Replaces the sequential DenseNet-like structure to allow parallel execution.
@@ -198,142 +98,6 @@ class AtrousDenseBlock(nn.Module):
         # Parallel execution of branches
         branch_outputs = [branch(x) for branch in self.branches]
         out = torch.cat([x] + branch_outputs, 1)
-        return out
-
-class DenseNet(nn.Module):
-    """
-    Densely Connected Convolutional Neural Network [1].
-
-    Connects each layer to every other layer in a feed-forward 
-    fashion. This alleviates the vanishing-gradient problem, 
-    strengthens feature propagation, encourages feature reuse, and 
-    substantially reduces the number of parameters.
-
-    Architecture
-    ------------
-    * Initial Convolution Layer
-    * DenseBlock - TransitionLayer (x2)
-    * DenseBlock - Global Avg Pooling
-    * Fully Connected
-    * Softmax
-    
-    When we say we have a DenseNet of L layers, L is computed as 
-    follows:
-    - There are 3 Dense blocks, each with n layers.
-    - There is an initial conv layer, and final fully-connected layer.
-    - There are 2 Transition layers, each with 1 layer.
-    Hence, L = 3*n + 2 + 2 = 3*n + 4.
-
-    This is equivalent to saying (L - 4) must be divisible by 3.
-
-    References
-    ----------
-    - [1]: Huang et. al., https://arxiv.org/abs/1608.06993
-    """
-    def __init__(self, 
-                 num_blocks, 
-                 num_layers_total, 
-                 growth_rate, 
-                 num_classes, 
-                 bottleneck, 
-                 p, 
-                 theta):
-        """
-        Initialize the DenseNet network. He. et al weight initialization 
-        is used (scaling by sqrt(2/n) to make variance 2/n).
-
-        Params
-        ------
-        - num_blocks: (int) number of dense blocks in the network. On the CIFAR 
-          datasets, this is set to 3 while on ImageNet, it's set to 4.
-        - num_layers_total: (int) total number of layers L in the network. L must
-          follow the following equation: L = 3*n + 4 where n is the number of
-          layers in each dense block.
-        - growth_rate: (int) this is k in the paper. Number of feature maps produced
-          by each convolution in the dense blocks. 
-        - num_classes: (int) number of output classes in the dataset.
-        - bottleneck: (bool) specifies if the bottleneck variant of the dense block is
-          to be used. 
-        - p: (float) dropout rate. Used on non-augmented versions of the datasets.
-        - theta: (float) compression factor in the range [0, 1]. In the paper, a value
-          of 0.5 is used when bottleneck is used.
-        """
-        super(DenseNet, self).__init__()
-
-        # ensure L relationship talked above 
-        error_msg = "[!] Total number of layers must be 3*n + 4..."
-        assert (num_layers_total - 4) % 3 == 0, error_msg
-
-        # compute L, the number of layers in each dense block
-        # if bottleneck, we need to adjust L by a factor of 2
-        num_layers_dense = int((num_layers_total - 4) / 3)
-        if bottleneck:
-            num_layers_dense = int(num_layers_dense / 2)
-
-        # ================================== #
-        # initial convolutional layer
-        out_channels = 16
-        if bottleneck:
-            out_channels = 2 * growth_rate
-        self.conv = nn.Conv2d(3,
-                              out_channels, 
-                              kernel_size=3,
-                              padding=1)
-        # ================================== #
-
-        # ================================== #
-        # dense blocks and transition layers 
-        blocks = []
-        for i in range(num_blocks - 1):
-            # dense block
-            dblock = DenseBlock(num_layers_dense, 
-                                out_channels, 
-                                growth_rate, 
-                                bottleneck, 
-                                p)
-            blocks.append(dblock)
-
-            # transition block
-            out_channels = dblock.out_channels
-            trans = TransitionLayer(out_channels, theta, p)
-            blocks.append(trans)
-            out_channels = trans.out_channels
-        # ================================== #
-
-        # ================================== #
-        # last dense block does not have transition layer
-        dblock = DenseBlock(num_layers_dense, 
-                            out_channels, 
-                            growth_rate, 
-                            bottleneck, 
-                            p)
-        blocks.append(dblock)
-        self.block = nn.Sequential(*blocks)
-        self.out_channels = dblock.out_channels
-        # ================================== #
-
-        # ================================== #
-        # fully-connected layer
-        self.fc = nn.Linear(self.out_channels, num_classes)
-        # ================================== #
-
-        # ================================== #
-        # He et. al weight initialization
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
-                m.weight.data.normal_(0, sqrt(2. / n))
-        # ================================== #
-
-    def forward(self, x):
-        """
-        Run the forward pass of the DenseNet model.
-        """
-        out = self.conv(x)
-        out = self.block(out)
-        out = F.avg_pool2d(out, 8)
-        out = out.view(-1, self.out_channels)
-        out = self.fc(out)
         return out
 
 class FeedForward(nn.Sequential):

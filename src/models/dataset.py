@@ -9,20 +9,20 @@ import random
 
 
 class RandomImageDataset(Dataset):
-    """Dataset que gera imagens aleatórias para testes e desenvolvimento.
+    """Dataset that generates random images for testing and development.
 
-    Comportamento novo: se um `DataFrame` for passado via `df`, o dataset usa os
-    caminhos e labels do DataFrame em vez de gerar imagens aleatórias.
+    New behavior: if a `DataFrame` is passed via `df`, the dataset uses the
+    paths and labels from the DataFrame instead of generating random images.
 
     Args:
-        length: comprimento do dataset (usado apenas quando df is None)
-        image_size: tamanho das imagens aleatórias
-        num_classes: número de classes (apenas para geração aleatória)
-        transform: transformações aplicadas à imagem
-        df: pandas DataFrame com colunas contendo caminhos e labels. Se fornecido,
-            o dataset usa os caminhos do DataFrame. Espera colunas 'path' e 'label'
-            por padrão ou use `path_col`/`label_col`.
-        path_col, label_col: nomes das colunas no DataFrame
+        length: length of the dataset (used only when df is None)
+        image_size: size of the random images
+        num_classes: number of classes (only for random generation)
+        transform: transformations applied to the image
+        df: pandas DataFrame with columns containing paths and labels. If provided,
+            the dataset uses the paths from the DataFrame. Expects 'path' and 'label'
+            columns by default or use `path_col`/`label_col`.
+        path_col, label_col: column names in the DataFrame
     """
 
     def __init__(self,
@@ -41,12 +41,11 @@ class RandomImageDataset(Dataset):
         self.samples: List[tuple] = []
         if df is not None:
             if not isinstance(df, pd.DataFrame):
-                raise ValueError('df deve ser um pandas.DataFrame')
+                raise ValueError('df must be a pandas.DataFrame')
             if path_col not in df.columns:
-                raise ValueError(f"Coluna de caminho '{path_col}' não encontrada no DataFrame")
+                raise ValueError(f"Path column '{path_col}' not found in DataFrame")
             if label_col not in df.columns:
-                df = df.copy()
-                df[label_col] = 0
+                raise ValueError(f"Label column '{label_col}' not found in DataFrame")
 
             for _, row in df.iterrows():
                 self.samples.append((str(row[path_col]), int(row[label_col])))
@@ -64,14 +63,14 @@ class RandomImageDataset(Dataset):
                 img = self.transform(img)
             return img, label
         else:
-            raise ValueError("Dataset foi inicializado sem DataFrame de amostras.")
+            raise ValueError("Dataset was initialized without samples DataFrame.")
 
 
 class SimpleImageFolder(Dataset):
-    """Dataset que recebe um DataFrame com caminhos de imagens e rótulos numéricos.
+    """Dataset that receives a DataFrame with image paths and numeric labels.
     
-    O DataFrame deve conter colunas para path (caminho da imagem) e label (rótulo numérico).
-    Todos os dados são armazenados em self.data para acesso rápido.
+    The DataFrame must contain columns for path (image path) and label (numeric label).
+    All data is stored in self.data for fast access.
     """
 
     def __init__(self,
@@ -80,26 +79,26 @@ class SimpleImageFolder(Dataset):
                  path_col: str = 'path',
                  label_col: str = 'label'):
         """
-        Inicializa o dataset a partir de um DataFrame.
+        Initializes the dataset from a DataFrame.
         
         Args:
-            df: DataFrame com caminhos das imagens e labels
-            transform: transformações a aplicar nas imagens
-            path_col: nome da coluna com os caminhos das imagens
-            label_col: nome da coluna com os labels numéricos
+            df: DataFrame with image paths and labels
+            transform: transformations to apply to the images
+            path_col: name of the column with image paths
+            label_col: name of the column with numeric labels
         """
         if not isinstance(df, pd.DataFrame):
-            raise ValueError('df deve ser um pandas.DataFrame')
+            raise ValueError('df must be a pandas.DataFrame')
         
         if path_col not in df.columns:
-            raise ValueError(f"Coluna '{path_col}' não encontrada no DataFrame")
+            raise ValueError(f"Column '{path_col}' not found in DataFrame")
         
         if label_col not in df.columns:
-            raise ValueError(f"Coluna '{label_col}' não encontrada no DataFrame")
+            raise ValueError(f"Column '{label_col}' not found in DataFrame")
         
         self.data = df[[path_col, label_col]].copy()
-        self.data.columns = ['path', 'label']  # padroniza nomes
-        self.data['label'] = self.data['label'].astype(int)  # garante que label é int
+        self.data.columns = ['path', 'label']  # standardize names
+        self.data['label'] = self.data['label'].astype(int)  # ensure label is int
 
         self.transform = transform or T.Compose([T.Resize((224, 224)), T.ToTensor()])
 
@@ -110,7 +109,7 @@ class SimpleImageFolder(Dataset):
 
     def __getitem__(self, idx):
         """
-        Retorna uma tupla (imagem_tensor, label) para o índice dado.
+        Returns a tuple (image_tensor, label) for the given index.
         """
         row = self.data.iloc[idx]
         img_path = row['path']
@@ -124,13 +123,23 @@ class SimpleImageFolder(Dataset):
         return img, label
 
 def prepare_bmp_only(src_dir: str, dst_dir: str = "data_prepared") -> int:
+    """
+    Copies only .bmp files from source directory to destination directory, preserving structure.
+    
+    Args:
+        src_dir: Source directory path.
+        dst_dir: Destination directory path.
+        
+    Returns:
+        int: Number of files copied.
+    """
     if not os.path.isdir(src_dir):
-        raise ValueError(f"src_dir não existe ou não é um diretório: {src_dir}")
+        raise ValueError(f"src_dir does not exist or is not a directory: {src_dir}")
 
     abs_src = os.path.abspath(src_dir)
     abs_dst = os.path.abspath(dst_dir)
     if abs_src == abs_dst or abs_dst.startswith(abs_src + os.sep):
-        raise ValueError("dst_dir não pode ser o mesmo que src_dir nem estar dentro de src_dir")
+        raise ValueError("dst_dir cannot be the same as src_dir nor be inside src_dir")
 
     copied = 0
     for dirpath, dirnames, filenames in os.walk(src_dir):
@@ -148,8 +157,8 @@ def prepare_bmp_only(src_dir: str, dst_dir: str = "data_prepared") -> int:
                     shutil.copy2(src_path, dst_path)
                     copied += 1
                 except Exception as e:
-                    # se houver erro ao copiar, continua e registra em stderr
-                    print(f"Erro copiando {src_path} -> {dst_path}: {e}")
+                    # if there is an error copying, continue and log to stderr
+                    print(f"Error copying {src_path} -> {dst_path}: {e}")
 
     return copied
 
@@ -157,14 +166,27 @@ def prepare_bmp_only(src_dir: str, dst_dir: str = "data_prepared") -> int:
 def augment_data_prepared(data_dir: str = None, 
                             df_paths = None,
                           augmentations_per_image: int = 3) -> int:
-
+    """
+    Augments data by creating variations of existing images.
+    
+    Args:
+        data_dir: Directory containing images to augment.
+        df_paths: DataFrame containing image paths to augment.
+        augmentations_per_image: Number of augmentations to create per image.
+        
+    Returns:
+        int: Number of generated images.
+        (Optional) List[str]: List of paths of generated images (if df_paths is used).
+        (Optional) pd.DataFrame: Updated DataFrame with augmented images (if df_paths is used).
+    """
     generated = 0
     if data_dir:
         if not os.path.isdir(data_dir):
-            raise ValueError(f"data_dir não existe: {data_dir}")
+            raise ValueError(f"data_dir does not exist: {data_dir}")
     
         for root, dirs, files in os.walk(data_dir):
             for fname in files:
+                # Process only .bmp files that are not already augmented
                 if fname.lower().endswith('.bmp') and '_aug' not in fname:
                     src_path = os.path.join(root, fname)
                     try:
@@ -179,7 +201,7 @@ def augment_data_prepared(data_dir: str = None,
                             generated += 1
 
                     except Exception as e:
-                        print(f"Erro processando {src_path}: {e}")
+                        print(f"Error processing {src_path}: {e}")
                         continue
     elif df_paths is not None and len(df_paths) > 0:
         paths_aug = []
@@ -187,6 +209,7 @@ def augment_data_prepared(data_dir: str = None,
         for _, row in df_paths.iterrows():
             src_path = str(row['path'])
             label = int(row['label'])
+            # Process only .bmp files that are not already augmented
             if src_path.lower().endswith('.bmp') and '_aug' not in src_path:
                 try:
                     img = Image.open(src_path).convert('RGB')
@@ -202,7 +225,7 @@ def augment_data_prepared(data_dir: str = None,
                         generated += 1
 
                 except Exception as e:
-                    print(f"Erro processando {src_path}: {e}")
+                    print(f"Error processing {src_path}: {e}")
 
         df_aug = pd.DataFrame({'path': paths_aug, 'label': labels_aug})
         df_paths = pd.concat([df_paths.reset_index(drop=True), df_aug], ignore_index=True)
@@ -213,17 +236,18 @@ def augment_data_prepared(data_dir: str = None,
 
 
 def apply_random_augmentation(img: Image.Image) -> Image.Image:
-    """Aplica transformações aleatórias a uma imagem PIL.
+    """Applies random transformations to a PIL image.
     
-    Transformações possíveis:
-    - Rotação aleatória (-30 a 30 graus)
-    - Flip horizontal (50% chance)
-    - Flip vertical (50% chance)
-    - Ajuste de brilho (0.8 a 1.2)
-    - Ajuste de contraste (0.8 a 1.2)
-    - Zoom aleatório (0.9 a 1.1)
+    Possible transformations:
+    - Random rotation (-30 to 30 degrees)
+    - Horizontal flip (50% chance)
+    - Vertical flip (50% chance)
+    - Brightness adjustment (0.8 to 1.2)
+    - Contrast adjustment (0.8 to 1.2)
+    - Random zoom (0.9 to 1.1)
     
-    Retorna nova imagem PIL.
+    Returns:
+        Image.Image: New PIL image.
     """
     from PIL import ImageEnhance
     angle = random.uniform(-30, 30)
@@ -252,10 +276,12 @@ def apply_random_augmentation(img: Image.Image) -> Image.Image:
         img = img.resize((new_w, new_h), Image.BILINEAR)
         
         if zoom_factor > 1.0:
+            # Crop center if zoomed in
             left = (new_w - w) // 2
             top = (new_h - h) // 2
             img = img.crop((left, top, left + w, top + h))
         else:
+            # Pad with black if zoomed out
             from PIL import ImageOps
             delta_w = w - new_w
             delta_h = h - new_h
