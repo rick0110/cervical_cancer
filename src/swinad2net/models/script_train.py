@@ -19,7 +19,7 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f'Using device: {device}')
 
 paths = []
-for root, dirs, files in os.walk('./../../data'):
+for root, dirs, files in os.walk('./../../../data'):
     for file in files:
         if file.lower().endswith('.bmp'):
             paths.append(os.path.abspath(os.path.join(root, file)))

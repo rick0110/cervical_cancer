@@ -69,8 +69,8 @@ if __name__ == "__main__":
         "dyskeratotic": ('https://www.cs.uoi.gr/~marina/SIPAKMED/im_Dyskeratotic.7z', '7z')
     }
     for class_name, (url, compact_format) in dict_urls.items():
-        os.makedirs('./../../data', exist_ok=True)
-        save_directory = os.path.join('./../../data', class_name)
+        os.makedirs('./../../../data', exist_ok=True)
+        save_directory = os.path.join('./../../../data', class_name)
         download_dataset(url, save_directory)
 
 
