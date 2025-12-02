@@ -1,3 +1,11 @@
+#!/usr/bin/env python3
+
+# ============================================================================
+# This is a test script to train the SwinAD2Net model on the SipakMed dataset.
+# without k-fold cross-validation.
+# It performs data loading, augmentation, model training, and saves training history and graphs.
+# ============================================================================
+
 from train import *
 import os
 import pandas as pd
@@ -11,18 +19,13 @@ import matplotlib.pyplot as plt
 
 
 maps = {
-    'carcinoma': 1,
-    'dysplastic': 1,
-    'koilocytotic': 1,
+    'koilocytotic': 0,
     'dyskeratotic': 1,
-    'metaplastic': 0,
-    'columnar': 0,
-    'normal-intermediate': 0,
-    'superficial': 0,
-    'parabasal': 0,
+    'metaplastic': 2,
+    'superficial': 3,
+    'parabasal': 4,
 
 }
-
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f'Using device: {device}')
@@ -49,7 +52,7 @@ df = df.sample(frac=1, random_state=847).dropna().reset_index(drop=True)
 
 df_train, df_val = train_test_split(df, test_size=0.2, random_state=42, stratify=df['label'])
 
-_, paths_aug, df_train = augment_data_prepared(data_dir=None, df_paths=df_train, augmentations_per_image=7)
+_, paths_aug, df_train = augment_data_prepared(data_dir=None, df_paths=df_train, augmentations_per_image=5)
 
 print(f'Generated data {_}')
 print(f'The model is training with {len(df_train)} data')
@@ -59,13 +62,13 @@ print(f'Class distribution:\n{df_train["label"].value_counts()}')
 model, history, scores, predictions = train_swinad2net(
     train_df=df_train,
     val_df=df_val,
-    num_classes=2,
+    num_classes=5,
     image_size=224,
     embed_dim=128,
     growth_rate=32,
     dilation_rates=[1, 2, 3],
     batch_size=32,
-    num_epochs=1,
+    num_epochs=700,
     learning_rate=1e-3,
     checkpoint_dir='./checkpoints_256_embed/kfold_experiment',
     device=device,

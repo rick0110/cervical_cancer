@@ -9,8 +9,8 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 import pandas as pd
 
-from model import SwinAD2Net
-from dataset import SimpleImageFolder
+from .model import SwinAD2Net
+from .dataset import SimpleImageFolder
 import numpy as np
 from sklearn.metrics import accuracy_score, recall_score, precision_score, f1_score
 

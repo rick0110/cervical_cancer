@@ -1,4 +1,4 @@
-from train import *
+from .train import *
 import os
 import pandas as pd
 import numpy as np

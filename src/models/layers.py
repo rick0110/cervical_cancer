@@ -1,3 +1,15 @@
+#!/usr/bin/env python3
+
+# ============================================================================
+# In this file is found the implementation of different building blocks that 
+# compose the SwinAD2Net architecture. These include:
+# - Transition Layer
+# - Atrous Dense Block
+# - Atrous Dense Block ASPP-like (an alternative for faster implementations)
+# - Swin Transformer Block
+# - Deformable Swin Transformer Block
+# ============================================================================
+
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -6,14 +18,51 @@ from math import floor, sqrt
 import torch.utils.checkpoint as checkpoint
 import timm
 from typing import Tuple, Optional, List, Union, Any
+from timm.models.layers import SqueezeExcite as SEBlock
 
-__all__: List[str] = ["SwinTransformerStage", "SwinTransformerBlock", "DeformableSwinTransformerBlock", ]
+__all__: List[str] = ["SwinTransformerStage",
+                      "SwinTransformerBlock",
+                      "DeformableSwinTransformerBlock",
+                      "TransitionLayer",
+                      "PatchEmb",
+                      "Adb_SE_Transition",
+                      "Adb_SE_Transition_ASPP_like",]
+
+class PatchEmb(nn.Module):
+    """
+    Patch Embedding Layer. This layer is used to convert the input image into embedded patches.
+
+    Args:
+    - patch_size (int): Size of each patch.
+    - in_channels (int): Number of input channels.
+    - embed_dim (int): Dimension of the embedding.
+
+    Params
+    ------
+    - proj (nn.Conv2d): Convolutional layer to project the input image into patches.
+    - norm (nn.LayerNorm): Layer normalization layer.
+    """
+    def __init__(self, patch_size: int = 4, in_channels: int = 3, embed_dim: int = 128):
+        super(PatchEmb, self).__init__()
+        self.proj = nn.Conv2d(in_channels, embed_dim, kernel_size=patch_size, stride=patch_size)
+        self.norm = nn.LayerNorm(embed_dim)
+
+    def forward(self, x):
+        """
+        Forward pass of the Patch Embedding Layer.
+        """
+        x = self.proj(x)  # [B, embed_dim, H/patch_size, W/patch_size]
+        # LayerNorm espera [B, H, W, C], then we permute
+        B, C, H, W = x.shape
+        x = x.permute(0, 2, 3, 1)  # [B, H, W, C]
+        x = self.norm(x)
+        x = x.permute(0, 3, 1, 2)  # [B, C, H, W]
+        return x
 
 class TransitionLayer(nn.Module):
     """
-    In SwinAD2Net, this layer is placed between consecutive Dense blocks. 
-    It allows the network to downsample the size of feature 
-    maps using the pooling operator.
+    In SwinAD2Net, this layer is placed between Dense and SwinTransformer blocks. 
+    It allows the network to downsample the size of feature maps using the pooling operator.
 
     Concretely, this layer is a composition of 3 operations:
     BN - Conv (1x1) - AveragePool
@@ -27,15 +76,22 @@ class TransitionLayer(nn.Module):
     the number of output feature maps using a compression factor
     theta.
     """
-    def __init__(self, in_channels, theta, p):
+    def __init__(self, in_channels: int, theta: float, p: float = 0.0):
         """
         Initialize the different parts of the TransitionBlock.
 
+        Args:
+        - in_channels (int): number of input channels.
+        - theta (float): compression factor in the range [0, 1]. Set to 0.5 in SwinAD2Net presented in https://github.com/rick0110/cervical_cancer.
+        - p (float): dropout rate in the interval [0, 1].
+
         Params
         ------
-        - in_channels: number of input channels.
-        - theta: compression factor in the range [0, 1]. Set to 0.5 in SwinAD2Net presented in https://github.com/rick0110/cervical_cancer.
-        - p: dropout rate.
+        - p (float): dropout rate.
+        - out_channels (int): number of output channels after compression.
+        - bn (nn.BatchNorm2d): batch normalization layer.
+        - conv (nn.Conv2d): 1x1 convolutional layer.
+        - pool (nn.AvgPool2d): average pooling layer.
         """
         super(TransitionLayer, self).__init__()
         self.p = p
@@ -48,13 +104,33 @@ class TransitionLayer(nn.Module):
         self.pool = nn.AvgPool2d(2)
 
     def forward(self, x):
+        """
+        Forward pass of the Transition Layer.
+        """
         out = self.pool(self.conv(F.relu(self.bn(x))))
         if self.p > 0:
             out = F.dropout(out, p=self.p, training=self.training)
         return out
     
 class AtrousDenseBlock(nn.Module):
-    def __init__(self, in_channels, growth_rate, dilation_rates=[1, 2, 3]):
+    """
+    Atrous Dense Block as presented in SwinAD2Net. The details about the archtecture can be found in https://github.com/rick0110/cervical_cancer
+    """
+    def __init__(self, in_channels: int, growth_rate: int, dilation_rates: list = [1, 2, 3]):
+        """
+        Initialize the parameters of the Atrous Dense Block.
+        Args:
+        - in_channels (int): number of input channels.
+        - growth_rate (int): growth rate of the block.
+        - dilation_rates (list): list of dilation rates for each convolutional layer.
+
+        Params:
+        -------
+        - layers (nn.ModuleList): list of convolutional layers.
+        - out_channels (int): number of output channels after the block.
+        - layers (nn.ModuleList): list of convolutional layers.
+        - final_layer (nn.Sequential): final convolutional layer to process the concatenated output.
+        """
         super().__init__()
         layers = []
         channels = in_channels
@@ -67,7 +143,14 @@ class AtrousDenseBlock(nn.Module):
             ]
             channels += growth_rate 
         self.layers = nn.ModuleList(layers)
+
         self.out_channels = channels
+
+        self.final_layer = nn.Sequential(
+            nn.Conv2d(self.out_channels, self.out_channels, kernel_size=1, bias=False),
+            nn.BatchNorm2d(self.out_channels),
+            nn.ReLU(inplace=True)
+            )
 
     def forward(self, x):
         features = [x]
@@ -76,14 +159,31 @@ class AtrousDenseBlock(nn.Module):
             new_feat = conv(relu(conv0(bn(torch.cat(features, 1)))))
             features.append(new_feat)
         out = torch.cat(features, 1)
+        out = self.final_layer(out)
         return out
 
 class AtrousDenseBlock_ASPP_like(nn.Module):
     """
     Optimized Atrous Block with parallel branches (ASPP-like) for speed.
+    Instead of taking the relationship between the different convolutions by linear combinations
+    between their channels, this block executes each convolution in parallel and concatenates the results.  
     Replaces the sequential DenseNet-like structure to allow parallel execution.
     """
-    def __init__(self, in_channels, growth_rate, dilation_rates=[1, 2, 3]):
+    def __init__(self, in_channels: int, growth_rate: int, dilation_rates: list = [1, 2, 3]):
+        """
+        Initialize the parameters of the Atrous Dense Block ASPP-like.
+
+        Args:
+        - in_channels (int): number of input channels.
+        - growth_rate (int): growth rate of the block.
+        - dilation_rates (list): list of dilation rates for each parallel branch.
+
+        Params:
+        -------
+        - branches (nn.ModuleList): list of parallel convolutional branches.
+        - out_channels (int): number of output channels after concatenation.
+        - final_layer (nn.Sequential): final convolutional layer to process concatenated output. 
+        """
         super().__init__()
         self.branches = nn.ModuleList()
         for d in dilation_rates:
@@ -94,11 +194,132 @@ class AtrousDenseBlock_ASPP_like(nn.Module):
             ))
         self.out_channels = in_channels + len(dilation_rates) * growth_rate
 
+        self.final_layer = nn.Sequential(
+            nn.Conv2d(self.out_channels, self.out_channels, kernel_size=1, bias=False),
+            nn.BatchNorm2d(self.out_channels),
+            nn.ReLU(inplace=True)
+            )
+
     def forward(self, x):
-        # Parallel execution of branches
+        """
+        Parallel execution of branches
+        """
         branch_outputs = [branch(x) for branch in self.branches]
         out = torch.cat([x] + branch_outputs, 1)
+        out = self.final_layer(out)
         return out
+    
+class Adb_SE_Transition(nn.Module):
+    """
+    this module executes the sequence: ADB -> SE -> Transition
+    """
+    def __init__(self,
+                 in_channels: int,
+                 growth_rate: int,
+                 theta: float = 0.5,
+                 p_transition: float = 0.0, 
+                 dilation_rates: Optional[list] = None):
+        """
+        Initialize the Adb_SE_Transition module.
+        
+        Args:
+        - in_channels (int): number of input channels.
+        - growth_rate (int): growth rate for the Atrous Dense Block.
+        - theta (float): compression factor for the Transition Layer.
+        - p_transition (float): dropout rate for the Transition Layer.
+        - dilation_rates (Optional[list]): list of dilation rates for the Atrous Dense Block.
+        
+        Params
+        ------
+        - adb (AtrousDenseBlock): Atrous Dense Block instance.
+        - se (SEBlock): Squeeze-and-Excitation block instance.
+        - transition (TransitionLayer): Transition Layer instance.
+        - out_channels (int): number of output channels after the Transition Layer.
+        """
+        
+        super(Adb_SE_Transition, self).__init__()
+
+        self.adb = AtrousDenseBlock(
+            in_channels=in_channels,
+            growth_rate=growth_rate,
+            dilation_rates=dilation_rates
+        )
+        
+        adb_out_channels = self.adb.out_channels
+        self.se = SEBlock(channels=adb_out_channels)
+        
+        self.transition = TransitionLayer(
+            in_channels=adb_out_channels,
+            theta=theta,
+            p=p_transition
+        )
+        self.out_channels = self.transition.out_channels
+
+    def forward(self, x):
+        """
+        Forward pass of the Adb_SE_Transition module.
+        """
+        x_adb = self.adb(x)
+        x_se = self.se(x_adb)
+        x_out = self.transition(x_se)
+        
+        return x_out
+    
+class Adb_SE_Transition_ASPP_like(nn.Module):
+    """
+    this module executes the sequence: ADB_ASPP_like -> SE -> Transition
+    """
+    def __init__(self,
+                 in_channels: int,
+                 growth_rate: int,
+                 theta: float = 0.5,
+                 p_transition: float = 0.0, 
+                 dilation_rates: Optional[list] = None):
+        """
+        Initialize the Adb_SE_Transition_ASPP_like module.
+        
+        Args:
+        - in_channels (int): number of input channels.
+        - growth_rate (int): growth rate for the Atrous Dense Block ASPP-like.
+        - theta (float): compression factor for the Transition Layer.
+        - p_transition (float): dropout rate for the Transition Layer.
+        - dilation_rates (Optional[list]): list of dilation rates for the Atrous Dense Block ASPP-like.
+        
+        Params
+        ------
+        - adb (AtrousDenseBlock_ASPP_like): Atrous Dense Block ASPP-like instance.
+        - se (SEBlock): Squeeze-and-Excitation block instance.
+        - transition (TransitionLayer): Transition Layer instance.
+        - out_channels (int): number of output channels after the Transition Layer.
+        """
+        
+        super(Adb_SE_Transition_ASPP_like, self).__init__()
+
+        self.adb = AtrousDenseBlock_ASPP_like(
+            in_channels=in_channels,
+            growth_rate=growth_rate,
+            dilation_rates=dilation_rates
+        )
+        
+        adb_out_channels = self.adb.out_channels
+        self.se = SEBlock(channels=adb_out_channels)
+        
+        self.transition = TransitionLayer(
+            in_channels=adb_out_channels,
+            theta=theta,
+            p=p_transition
+        )
+        self.out_channels = self.transition.out_channels
+
+    def forward(self, x):
+        """
+        Forward pass of the Adb_SE_Transition_ASPP_like module.
+        """
+        x_adb = self.adb(x)
+        x_se = self.se(x_adb)
+        x_out = self.transition(x_se)
+        
+        return x_out
 
 class FeedForward(nn.Sequential):
     """

@@ -1,3 +1,10 @@
+#!/usr/bin/env python3
+
+# ============================================================================
+# This script downloads and extracts the SIPAKMED dataset.
+# It creates a temporary directory for downloads and cleans up after extraction.
+# ============================================================================
+
 import requests
 import os
 import tqdm
