@@ -1,3 +1,19 @@
+"""Training utilities for SwinAD2Net.
+
+This module provides a convenience function `train_swinad2net` to train the
+SwinAD2Net image classification model using Pandas DataFrames for training
+and optional validation. The training procedure includes data augmentation,
+TensorBoard logging, learning-rate scheduling, checkpointing and final
+metric computation (when a validation DataFrame is provided).
+
+Typical usage:
+    from src.models.train import train_swinad2net
+    model, history, scores, predictions = train_swinad2net(train_df, val_df)
+
+The module is intentionally lightweight and relies on `torch`, `torchvision`
+and a user-provided DataFrame that contains columns `path` and `label`.
+"""
+
 import os
 from typing import Optional
 
@@ -9,15 +25,15 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 import pandas as pd
 
-from model import SwinAD2Net
-from dataset import SimpleImageFolder
+from .model import SwinAD2Net
+from .dataset import SimpleImageFolder
 import numpy as np
 from sklearn.metrics import accuracy_score, recall_score, precision_score, f1_score
 
 
 def train_swinad2net(
     train_df: pd.DataFrame,
-    val_df: Optional[pd.DataFrame] = None,
+    val_df: pd.DataFrame = None,
     num_classes: int = 2,
     image_size: int = 224,
     embed_dim: int = 128,
@@ -33,43 +49,56 @@ def train_swinad2net(
     device: str = "cuda",
     state_dict=None
 ):
-    """
-    Função simples de treinamento para o modelo SwinAD2Net.
-    
+    """Train a SwinAD2Net image classification model.
+
+    This function performs a complete training loop for the `SwinAD2Net` model
+    using training and optional validation data provided as Pandas DataFrames.
+    It builds datasets with simple torchvision transforms, runs the training
+    loop with an AdamW optimizer and cosine annealing scheduler, logs metrics
+    to TensorBoard, saves periodic checkpoints and records the best validation
+    model based on validation accuracy.
+
     Args:
-        train_df: DataFrame com colunas 'path' (caminho das imagens) e 'label' (rótulos numéricos)
-        val_df: DataFrame de validação (opcional)
-        num_classes: número de classes para classificação
-        image_size: tamanho das imagens (altura e largura)
-        batch_size: tamanho do batch
-        num_epochs: número de épocas de treinamento
-        learning_rate: taxa de aprendizado inicial
-        weight_decay: weight decay para regularização L2
-        checkpoint_dir: diretório para salvar checkpoints
-        log_dir: diretório para logs do TensorBoard
-        device: 'cuda' ou 'cpu'
-    
+        train_df (pd.DataFrame): DataFrame with columns `path` (image filesystem
+            path) and `label` (integer class label) for training.
+        val_df (Optional[pd.DataFrame]): Validation DataFrame with the same
+            format as `train_df`. If provided, validation is evaluated every
+            epoch and metrics are returned.
+        num_classes (int): Number of classification output classes.
+        image_size (int): Input image size (height and width) used by the
+            torchvision transforms.
+        embed_dim (int): Embedding dimension passed to `SwinAD2Net`.
+        growth_rate (int): Growth-rate hyperparameter passed to model.
+        dilation_rates (list): List of dilation rates used by the model.
+        patch_size_embed (int): Patch size for the model embedding layer.
+        batch_size (int): Training batch size.
+        num_epochs (int): Number of epochs to train.
+        learning_rate (float): Initial learning rate for the optimizer.
+        weight_decay (float): L2 weight decay for optimizer regularization.
+        checkpoint_dir (str): Directory where checkpoints and best model are
+            saved. Created if it does not exist.
+        log_dir (str): Directory where TensorBoard logs are written.
+        device (str): PyTorch device string, e.g. `'cuda'` or `'cpu'`.
+        state_dict (optional): Optional state dictionary used to initialize the
+            model parameters before training (useful for fine-tuning).
+
     Returns:
-        Tupla (modelo treinado, dicionário de métricas)
-    """
-    """
-    Função simples de treinamento para o modelo SwinAD2Net.
-    
-    Args:
-        train_df: DataFrame com colunas 'path' (caminho das imagens) e 'label' (rótulos numéricos)
-        val_df: DataFrame de validação (opcional)
-        num_classes: número de classes para classificação
-        image_size: tamanho das imagens (altura e largura)
-        batch_size: tamanho do batch
-        num_epochs: número de épocas de treinamento
-        learning_rate: taxa de aprendizado inicial
-        weight_decay: weight decay para regularização L2
-        checkpoint_dir: diretório para salvar checkpoints
-        log_dir: diretório para logs do TensorBoard
-        device: 'cuda' ou 'cpu'
-    
-    Returns:
-        Modelo treinado
+        tuple: A 4-tuple `(model, history, scores, predictions_dict)` where:
+            - `model` (torch.nn.Module): The trained model (on `device`).
+            - `history` (dict): Training history containing lists for
+              `'loss_train'`, `'acc_train'`, `'loss_val'`, `'acc_val'`.
+            - `scores` (dict): Validation metrics (`val_accuracy`,
+              `val_recall`, `val_precision`, `val_f1`) if `val_df` was provided,
+              otherwise an empty dict.
+            - `predictions_dict` (dict): If validation was performed, contains
+              `'val_labels'` and `'val_predictions'` lists; otherwise empty.
+
+    Notes:
+        - Checkpoints are saved every 10 epochs as `checkpoint_epoch_{epoch}.pth`.
+        - The best validation model is saved as `best_model.pth` inside
+          `checkpoint_dir` when validation accuracy improves.
+        - TensorBoard logs are written to `log_dir`. Run
+          `tensorboard --logdir {log_dir}` to visualize training progress.
     """
     
     print(f"\n{'='*60}")
@@ -83,7 +112,7 @@ def train_swinad2net(
     import torchvision.transforms as T
     
     transform_train = T.Compose([
-        T.Resize([image_size, image_size]),  # Usar lista ao invés de tupla
+        T.Resize([image_size, image_size]), 
         T.RandomHorizontalFlip(),
         T.RandomRotation(15),
         T.ColorJitter(brightness=0.2, contrast=0.2),
@@ -92,7 +121,7 @@ def train_swinad2net(
     ])
     
     transform_val = T.Compose([
-        T.Resize([image_size, image_size]),  # Usar lista ao invés de tupla
+        T.Resize([image_size, image_size]),  
         T.ToTensor(),
         T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
@@ -122,7 +151,16 @@ def train_swinad2net(
     
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
-    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs)
+
+    warmup_epochs = 15
+    def warmup_lr(epoch):
+        if epoch < warmup_epochs:
+            return (epoch + 1) / warmup_epochs
+        return 1.0
+    
+    warmup_scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=warmup_lr)
+    cosine_annealing_scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs-warmup_epochs)
+
     writer = SummaryWriter(log_dir=log_dir)
     best_val_acc = 0.0
     history = {'loss_train': [], 'acc_train': [], 'loss_val': [], 'acc_val': []}
@@ -192,7 +230,11 @@ def train_swinad2net(
                            'val_acc': val_acc}, os.path.join(checkpoint_dir, "best_model.pth"))
                 print(f"✓ Melhor modelo salvo! (Val Acc: {val_acc:.2f}%)")
         
-        scheduler.step()
+        if epoch <= warmup_epochs:
+            warmup_scheduler.step()
+        else:
+            cosine_annealing_scheduler.step()
+
         writer.add_scalar('Learning_Rate', optimizer.param_groups[0]['lr'], epoch)
         
         if epoch % 10 == 0:
@@ -208,13 +250,12 @@ def train_swinad2net(
     print(f"TensorBoard: tensorboard --logdir {log_dir}")
     print(f"{'='*60}\n")
 
-    # Calcular métricas apenas se houver validação
     scores = {}
-    predictions_dict = {}  # Inicializar vazio para evitar erros quando val_df=None
+    predictions_dict = {}  
     
     if val_df is not None and val_loader is not None:
         val_targets = val_df['label'].values
-        val_predictions = []  # CORRIGIDO: typo val_predinctions
+        val_predictions = [] 
         
         model.eval()
         with torch.no_grad():
@@ -232,7 +273,7 @@ def train_swinad2net(
         }
 
         predictions_dict = {
-            'val_labels': val_targets.tolist(),  # Converter para lista para serialização
+            'val_labels': val_targets.tolist(),
             'val_predictions': val_predictions
         }
 
@@ -244,30 +285,4 @@ def train_swinad2net(
 
     return model, history, scores, predictions_dict
 
-
-if __name__ == '__main__':
-    # Exemplo de uso com DataFrame
-    import pandas as pd
-    
-    # Criar DataFrame de exemplo (substitua pelos seus dados)
-    train_data = {
-        'path': [
-            'data_prepared/class_0/img1.BMP',
-            'data_prepared/class_0/img2.BMP',
-            'data_prepared/class_1/img3.BMP',
-        ],
-        'label': [0, 0, 1]
-    }
-    train_df = pd.DataFrame(train_data)
-    
-    # Treinar modelo
-    model = train_swinad2net(
-        train_df=train_df,
-        val_df=None,
-        num_classes=2,
-        image_size=224,
-        batch_size=16,
-        num_epochs=200,
-        learning_rate=1e-3
-    )
 

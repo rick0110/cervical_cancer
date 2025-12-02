@@ -1,10 +1,30 @@
+#!/usr/bin/env python3
+
+# ============================================================================
+# This script downloads and extracts the SIPAKMED dataset.
+# It creates a temporary directory for downloads and cleans up after extraction.
+# ============================================================================
+
 import requests
 import os
 import tqdm
 import shutil
 import py7zr
+from typing import Optional, Tuple, List, Dict
 
-def download_dataset(url: str, save_dir: str, compact_format = "7z") -> None:
+def download_dataset(url: str, save_dir: str, compact_format: str = "7z") -> None:
+    """
+    Downloads and extracts a dataset from a given URL.
+    Warning: A directory named 'temporary_downloads' will be created in the current working directory. This directory will be deleted after extraction.
+    
+    Args:
+        url (str): The URL to download the dataset from.
+        save_dir (str): The directory to save the extracted dataset.
+        compact_format (str): The compression format of the dataset. Currently only '7z' is supported.
+    
+    Returns:
+        None
+    """
     
     try:
         response = requests.get(url, stream=True)
@@ -12,6 +32,8 @@ def download_dataset(url: str, save_dir: str, compact_format = "7z") -> None:
 
         total_length_bytes = int(response.headers.get('content-length', 0))
         print(f"Downloading dataset with {total_length_bytes} bytes from {url}.")
+        if os.path.exists('./temporary_downloads'):
+            raise FileExistsError("The directory './temporary_downloads' already exists. Please remove it before downloading.")
         os.mkdir('./temporary_downloads')
         with tqdm.tqdm(desc="Downloading", total=total_length_bytes, unit='B', unit_scale=True) as pbar:
             with open('./temporary_downloads/dataset', 'wb') as f:
@@ -47,8 +69,8 @@ if __name__ == "__main__":
         "dyskeratotic": ('https://www.cs.uoi.gr/~marina/SIPAKMED/im_Dyskeratotic.7z', '7z')
     }
     for class_name, (url, compact_format) in dict_urls.items():
-        os.makedirs('./../../data', exist_ok=True)
-        save_directory = os.path.join('./../../data', class_name)
+        os.makedirs('./../../../data', exist_ok=True)
+        save_directory = os.path.join('./../../../data', class_name)
         download_dataset(url, save_directory)
 
 

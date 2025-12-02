@@ -2,10 +2,10 @@
 
 **Tipo**: bug / enhancement / question
 
-Descrição:
+Description:
 
-Passos para reproduzir:
+Steps to repoduce:
 
-Comportamento esperado:
+Expected behavior:
 
-Comportamento observado:
+Presented behavior:

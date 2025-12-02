@@ -1,166 +1,97 @@
+#!/usr/bin/env python3
+
+# ============================================================================
+# In this file is found the implementation of different building blocks that 
+# compose the SwinAD2Net architecture. These include:
+# - Transition Layer
+# - Atrous Dense Block
+# - Atrous Dense Block ASPP-like (an alternative for faster implementations)
+# - Swin Transformer Block
+# - Deformable Swin Transformer Block
+# ============================================================================
+
 import torch
 from torch import nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 from math import floor, sqrt
-from typing import Tuple, Optional, List, Union, Any
 import torch.utils.checkpoint as checkpoint
 import timm
+from typing import Tuple, Optional, List, Union, Any
+from timm.models.layers import SqueezeExcite as SEBlock
 
-__all__: List[str] = ["SwinTransformerStage", "SwinTransformerBlock", "DeformableSwinTransformerBlock"]
+__all__: List[str] = ["SwinTransformerStage",
+                      "SwinTransformerBlock",
+                      "DeformableSwinTransformerBlock",
+                      "TransitionLayer",
+                      "PatchEmb",
+                      "Adb_SE_Transition",
+                      "Adb_SE_Transition_ASPP_like",]
 
-
-class StemLayer(nn.Module):
-    def __init__(self, in_channels=3, out_channels=64):
-        super(StemLayer, self).__init__()
-        self.stem = nn.Sequential(
-            nn.Conv2d(
-                in_channels=in_channels,  
-                out_channels=out_channels,
-                kernel_size=3,         
-                stride=1,
-                padding=1,
-                bias=False
-            ),
-            
-            nn.BatchNorm2d(out_channels),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(
-                kernel_size=2,          
-                stride=2,
-                padding=0
-            )
-        )
-
-    def forward(self, x):
-        return self.stem(x)
-
-class SubBlock(nn.Module):
+class PatchEmb(nn.Module):
     """
-    This piece of the DenseBlock receives an input feature map
-    x and transforms it through a dense, composite function H(x).
+    Patch Embedding Layer. This layer is used to convert the input image into embedded patches.
 
-    The transformation H(x) is a composition of 3 consecutive 
-    operations: BN - ReLU - Conv (3x3).
+    Args:
+    - patch_size (int): Size of each patch.
+    - in_channels (int): Number of input channels.
+    - embed_dim (int): Dimension of the embedding.
 
-    In the bottleneck variant of the SubBlock, a 1x1 conv is
-    added to the transformation function H(x), reducing the number
-    of input feature maps and improving computational efficiency.
+    Params
+    ------
+    - proj (nn.Conv2d): Convolutional layer to project the input image into patches.
+    - norm (nn.LayerNorm): Layer normalization layer.
     """
-    def __init__(self, in_channels, out_channels, bottleneck, p):
-        """
-        Initialize the different parts of the SubBlock.
-
-        Params
-        ------
-        - in_channels: number of input channels in the convolution.
-        - out_channels: number of output channels in the convolution.
-        - bottleneck: if true, applies the bottleneck variant of H(x).
-        - p: if greater than 0, applies dropout after the convolution.
-        """
-        super(SubBlock, self).__init__()
-        self.bottleneck = bottleneck
-        self.p = p
-
-        in_channels_2 = in_channels
-        out_channels_2 = out_channels
-
-        if bottleneck:
-            in_channels_1 = in_channels
-            out_channels_1 = out_channels * 4
-            in_channels_2 = out_channels_1
-
-            self.bn1 = nn.BatchNorm2d(in_channels_1)
-            self.conv1 = nn.Conv2d(in_channels_1,
-                                   out_channels_1,
-                                   kernel_size=1)
-
-        self.bn2 = nn.BatchNorm2d(in_channels_2)
-        self.conv2 = nn.Conv2d(in_channels_2, 
-                               out_channels_2, 
-                               kernel_size=3, 
-                               padding=1)
+    def __init__(self, patch_size: int = 4, in_channels: int = 3, embed_dim: int = 128):
+        super(PatchEmb, self).__init__()
+        self.proj = nn.Conv2d(in_channels, embed_dim, kernel_size=patch_size, stride=patch_size)
+        self.norm = nn.LayerNorm(embed_dim)
 
     def forward(self, x):
         """
-        Compute the forward pass of the composite transformation H(x),
-        where x is the concatenation of the current and all preceding
-        feature maps.
+        Forward pass of the Patch Embedding Layer.
         """
-        if self.bottleneck:
-            out = self.conv1(F.relu(self.bn1(x)))
-            if self.p > 0:
-                out = F.dropout(out, p=self.p, training=self.training)
-            out = self.conv2(F.relu(self.bn2(out)))
-            if self.p > 0:
-                out = F.dropout(out, p=self.p, training=self.training)
-        else:
-            out = self.conv2(F.relu(self.bn2(x)))
-            if self.p > 0:
-                out = F.dropout(out, p=self.p, training=self.training)  
-        return torch.cat((x, out), 1)
-
-class DenseBlock(nn.Module):
-    """
-    Block that connects L layers directly with each other in a 
-    feed-forward fashion.
-
-    Concretely, this block is composed of L SubBlocks sharing a 
-    common growth rate k (Figure 1 in the paper).
-    """
-    def __init__(self, num_layers, in_channels, growth_rate, bottleneck, p):
-        """
-        Initialize the different parts of the DenseBlock.
-
-        Params
-        ------
-        - num_layers: the number of layers L in the dense block.
-        - in_channels: the number of input channels feeding into the first 
-          subblock.
-        - growth_rate: the number of output feature maps produced by each subblock.
-          This number is common across all subblocks.
-        """
-        super(DenseBlock, self).__init__()
-
-        # create L subblocks
-        layers = []
-        for i in range(num_layers):
-            cumul_channels = in_channels + i * growth_rate
-            layers.append(SubBlock(cumul_channels, growth_rate, bottleneck, p))
-
-        self.block = nn.Sequential(*layers)
-        self.out_channels = cumul_channels + growth_rate
-
-    def forward(self, x):
-        """
-        Feed the input feature map x through the L subblocks 
-        of the DenseBlock.
-        """
-        out = self.block(x)
-        return out
+        x = self.proj(x)  # [B, embed_dim, H/patch_size, W/patch_size]
+        # LayerNorm espera [B, H, W, C], then we permute
+        B, C, H, W = x.shape
+        x = x.permute(0, 2, 3, 1)  # [B, H, W, C]
+        x = self.norm(x)
+        x = x.permute(0, 3, 1, 2)  # [B, C, H, W]
+        return x
 
 class TransitionLayer(nn.Module):
     """
-    This layer is placed between consecutive Dense blocks. 
-    It allows the network to downsample the size of feature 
-    maps using the pooling operator.
+    In SwinAD2Net, this layer is placed between Dense and SwinTransformer blocks. 
+    It allows the network to downsample the size of feature maps using the pooling operator.
 
     Concretely, this layer is a composition of 3 operations:
     BN - Conv (1x1) - AveragePool
     
-    Additionally, this layer can perform compression by reducing
+    This layer first applies Batch Normalization followed by a ReLU activation.
+    Then, a 1x1 convolution is applied to change the number of feature maps, 
+    mapping from in_channels to theta * in_channels.
+    Finally, an Average Pooling operation with kernel size 2 is applied to downsample the spatial dimensions.
+    
+    This layer can perform compression by reducing
     the number of output feature maps using a compression factor
     theta.
     """
-    def __init__(self, in_channels, theta, p):
+    def __init__(self, in_channels: int, theta: float, p: float = 0.0):
         """
         Initialize the different parts of the TransitionBlock.
 
+        Args:
+        - in_channels (int): number of input channels.
+        - theta (float): compression factor in the range [0, 1]. Set to 0.5 in SwinAD2Net presented in https://github.com/rick0110/cervical_cancer.
+        - p (float): dropout rate in the interval [0, 1].
+
         Params
         ------
-        - in_channels: number of input channels.
-        - theta: compression factor in the range [0, 1]. Set to 0.5
-          in the paper when using DenseNet-BC.
+        - p (float): dropout rate.
+        - out_channels (int): number of output channels after compression.
+        - bn (nn.BatchNorm2d): batch normalization layer.
+        - conv (nn.Conv2d): 1x1 convolutional layer.
+        - pool (nn.AvgPool2d): average pooling layer.
         """
         super(TransitionLayer, self).__init__()
         self.p = p
@@ -173,13 +104,33 @@ class TransitionLayer(nn.Module):
         self.pool = nn.AvgPool2d(2)
 
     def forward(self, x):
+        """
+        Forward pass of the Transition Layer.
+        """
         out = self.pool(self.conv(F.relu(self.bn(x))))
         if self.p > 0:
             out = F.dropout(out, p=self.p, training=self.training)
         return out
-
+    
 class AtrousDenseBlock(nn.Module):
-    def __init__(self, in_channels, growth_rate, dilation_rates=[1, 2, 3]):
+    """
+    Atrous Dense Block as presented in SwinAD2Net. The details about the archtecture can be found in https://github.com/rick0110/cervical_cancer
+    """
+    def __init__(self, in_channels: int, growth_rate: int, dilation_rates: list = [1, 2, 3]):
+        """
+        Initialize the parameters of the Atrous Dense Block.
+        Args:
+        - in_channels (int): number of input channels.
+        - growth_rate (int): growth rate of the block.
+        - dilation_rates (list): list of dilation rates for each convolutional layer.
+
+        Params:
+        -------
+        - layers (nn.ModuleList): list of convolutional layers.
+        - out_channels (int): number of output channels after the block.
+        - layers (nn.ModuleList): list of convolutional layers.
+        - final_layer (nn.Sequential): final convolutional layer to process the concatenated output.
+        """
         super().__init__()
         layers = []
         channels = in_channels
@@ -190,9 +141,16 @@ class AtrousDenseBlock(nn.Module):
                 nn.ReLU(inplace=True),
                 nn.Conv2d(channels, growth_rate, kernel_size=3, padding=d, dilation=d, bias=False)
             ]
-            channels += growth_rate  # concat like DenseNet
+            channels += growth_rate 
         self.layers = nn.ModuleList(layers)
+
         self.out_channels = channels
+
+        self.final_layer = nn.Sequential(
+            nn.Conv2d(self.out_channels, self.out_channels, kernel_size=1, bias=False),
+            nn.BatchNorm2d(self.out_channels),
+            nn.ReLU(inplace=True)
+            )
 
     def forward(self, x):
         features = [x]
@@ -201,143 +159,167 @@ class AtrousDenseBlock(nn.Module):
             new_feat = conv(relu(conv0(bn(torch.cat(features, 1)))))
             features.append(new_feat)
         out = torch.cat(features, 1)
+        out = self.final_layer(out)
         return out
 
-class DenseNet(nn.Module):
+class AtrousDenseBlock_ASPP_like(nn.Module):
     """
-    Densely Connected Convolutional Neural Network [1].
-
-    Connects each layer to every other layer in a feed-forward 
-    fashion. This alleviates the vanishing-gradient problem, 
-    strengthens feature propagation, encourages feature reuse, and 
-    substantially reduces the number of parameters.
-
-    Architecture
-    ------------
-    * Initial Convolution Layer
-    * DenseBlock - TransitionLayer (x2)
-    * DenseBlock - Global Avg Pooling
-    * Fully Connected
-    * Softmax
-    
-    When we say we have a DenseNet of L layers, L is computed as 
-    follows:
-    - There are 3 Dense blocks, each with n layers.
-    - There is an initial conv layer, and final fully-connected layer.
-    - There are 2 Transition layers, each with 1 layer.
-    Hence, L = 3*n + 2 + 2 = 3*n + 4.
-
-    This is equivalent to saying (L - 4) must be divisible by 3.
-
-    References
-    ----------
-    - [1]: Huang et. al., https://arxiv.org/abs/1608.06993
+    Optimized Atrous Block with parallel branches (ASPP-like) for speed.
+    Instead of taking the relationship between the different convolutions by linear combinations
+    between their channels, this block executes each convolution in parallel and concatenates the results.  
+    Replaces the sequential DenseNet-like structure to allow parallel execution.
     """
-    def __init__(self, 
-                 num_blocks, 
-                 num_layers_total, 
-                 growth_rate, 
-                 num_classes, 
-                 bottleneck, 
-                 p, 
-                 theta):
+    def __init__(self, in_channels: int, growth_rate: int, dilation_rates: list = [1, 2, 3]):
         """
-        Initialize the DenseNet network. He. et al weight initialization 
-        is used (scaling by sqrt(2/n) to make variance 2/n).
+        Initialize the parameters of the Atrous Dense Block ASPP-like.
 
-        Params
-        ------
-        - num_blocks: (int) number of dense blocks in the network. On the CIFAR 
-          datasets, this is set to 3 while on ImageNet, it's set to 4.
-        - num_layers_total: (int) total number of layers L in the network. L must
-          follow the following equation: L = 3*n + 4 where n is the number of
-          layers in each dense block.
-        - growth_rate: (int) this is k in the paper. Number of feature maps produced
-          by each convolution in the dense blocks. 
-        - num_classes: (int) number of output classes in the dataset.
-        - bottleneck: (bool) specifies if the bottleneck variant of the dense block is
-          to be used. 
-        - p: (float) dropout rate. Used on non-augmented versions of the datasets.
-        - theta: (float) compression factor in the range [0, 1]. In the paper, a value
-          of 0.5 is used when bottleneck is used.
+        Args:
+        - in_channels (int): number of input channels.
+        - growth_rate (int): growth rate of the block.
+        - dilation_rates (list): list of dilation rates for each parallel branch.
+
+        Params:
+        -------
+        - branches (nn.ModuleList): list of parallel convolutional branches.
+        - out_channels (int): number of output channels after concatenation.
+        - final_layer (nn.Sequential): final convolutional layer to process concatenated output. 
         """
-        super(DenseNet, self).__init__()
+        super().__init__()
+        self.branches = nn.ModuleList()
+        for d in dilation_rates:
+            self.branches.append(nn.Sequential(
+                nn.Conv2d(in_channels, growth_rate, kernel_size=3, padding=d, dilation=d, bias=False),
+                nn.BatchNorm2d(growth_rate),
+                nn.ReLU(inplace=True)
+            ))
+        self.out_channels = in_channels + len(dilation_rates) * growth_rate
 
-        # ensure L relationship talked above 
-        error_msg = "[!] Total number of layers must be 3*n + 4..."
-        assert (num_layers_total - 4) % 3 == 0, error_msg
-
-        # compute L, the number of layers in each dense block
-        # if bottleneck, we need to adjust L by a factor of 2
-        num_layers_dense = int((num_layers_total - 4) / 3)
-        if bottleneck:
-            num_layers_dense = int(num_layers_dense / 2)
-
-        # ================================== #
-        # initial convolutional layer
-        out_channels = 16
-        if bottleneck:
-            out_channels = 2 * growth_rate
-        self.conv = nn.Conv2d(3,
-                              out_channels, 
-                              kernel_size=3,
-                              padding=1)
-        # ================================== #
-
-        # ================================== #
-        # dense blocks and transition layers 
-        blocks = []
-        for i in range(num_blocks - 1):
-            # dense block
-            dblock = DenseBlock(num_layers_dense, 
-                                out_channels, 
-                                growth_rate, 
-                                bottleneck, 
-                                p)
-            blocks.append(dblock)
-
-            # transition block
-            out_channels = dblock.out_channels
-            trans = TransitionLayer(out_channels, theta, p)
-            blocks.append(trans)
-            out_channels = trans.out_channels
-        # ================================== #
-
-        # ================================== #
-        # last dense block does not have transition layer
-        dblock = DenseBlock(num_layers_dense, 
-                            out_channels, 
-                            growth_rate, 
-                            bottleneck, 
-                            p)
-        blocks.append(dblock)
-        self.block = nn.Sequential(*blocks)
-        self.out_channels = dblock.out_channels
-        # ================================== #
-
-        # ================================== #
-        # fully-connected layer
-        self.fc = nn.Linear(self.out_channels, num_classes)
-        # ================================== #
-
-        # ================================== #
-        # He et. al weight initialization
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
-                m.weight.data.normal_(0, sqrt(2. / n))
-        # ================================== #
+        self.final_layer = nn.Sequential(
+            nn.Conv2d(self.out_channels, self.out_channels, kernel_size=1, bias=False),
+            nn.BatchNorm2d(self.out_channels),
+            nn.ReLU(inplace=True)
+            )
 
     def forward(self, x):
         """
-        Run the forward pass of the DenseNet model.
+        Parallel execution of branches
         """
-        out = self.conv(x)
-        out = self.block(out)
-        out = F.avg_pool2d(out, 8)
-        out = out.view(-1, self.out_channels)
-        out = self.fc(out)
+        branch_outputs = [branch(x) for branch in self.branches]
+        out = torch.cat([x] + branch_outputs, 1)
+        out = self.final_layer(out)
         return out
+    
+class Adb_SE_Transition(nn.Module):
+    """
+    this module executes the sequence: ADB -> SE -> Transition
+    """
+    def __init__(self,
+                 in_channels: int,
+                 growth_rate: int,
+                 theta: float = 0.5,
+                 p_transition: float = 0.0, 
+                 dilation_rates: Optional[list] = None):
+        """
+        Initialize the Adb_SE_Transition module.
+        
+        Args:
+        - in_channels (int): number of input channels.
+        - growth_rate (int): growth rate for the Atrous Dense Block.
+        - theta (float): compression factor for the Transition Layer.
+        - p_transition (float): dropout rate for the Transition Layer.
+        - dilation_rates (Optional[list]): list of dilation rates for the Atrous Dense Block.
+        
+        Params
+        ------
+        - adb (AtrousDenseBlock): Atrous Dense Block instance.
+        - se (SEBlock): Squeeze-and-Excitation block instance.
+        - transition (TransitionLayer): Transition Layer instance.
+        - out_channels (int): number of output channels after the Transition Layer.
+        """
+        
+        super(Adb_SE_Transition, self).__init__()
+
+        self.adb = AtrousDenseBlock(
+            in_channels=in_channels,
+            growth_rate=growth_rate,
+            dilation_rates=dilation_rates
+        )
+        
+        adb_out_channels = self.adb.out_channels
+        self.se = SEBlock(channels=adb_out_channels)
+        
+        self.transition = TransitionLayer(
+            in_channels=adb_out_channels,
+            theta=theta,
+            p=p_transition
+        )
+        self.out_channels = self.transition.out_channels
+
+    def forward(self, x):
+        """
+        Forward pass of the Adb_SE_Transition module.
+        """
+        x_adb = self.adb(x)
+        x_se = self.se(x_adb)
+        x_out = self.transition(x_se)
+        
+        return x_out
+    
+class Adb_SE_Transition_ASPP_like(nn.Module):
+    """
+    this module executes the sequence: ADB_ASPP_like -> SE -> Transition
+    """
+    def __init__(self,
+                 in_channels: int,
+                 growth_rate: int,
+                 theta: float = 0.5,
+                 p_transition: float = 0.0, 
+                 dilation_rates: Optional[list] = None):
+        """
+        Initialize the Adb_SE_Transition_ASPP_like module.
+        
+        Args:
+        - in_channels (int): number of input channels.
+        - growth_rate (int): growth rate for the Atrous Dense Block ASPP-like.
+        - theta (float): compression factor for the Transition Layer.
+        - p_transition (float): dropout rate for the Transition Layer.
+        - dilation_rates (Optional[list]): list of dilation rates for the Atrous Dense Block ASPP-like.
+        
+        Params
+        ------
+        - adb (AtrousDenseBlock_ASPP_like): Atrous Dense Block ASPP-like instance.
+        - se (SEBlock): Squeeze-and-Excitation block instance.
+        - transition (TransitionLayer): Transition Layer instance.
+        - out_channels (int): number of output channels after the Transition Layer.
+        """
+        
+        super(Adb_SE_Transition_ASPP_like, self).__init__()
+
+        self.adb = AtrousDenseBlock_ASPP_like(
+            in_channels=in_channels,
+            growth_rate=growth_rate,
+            dilation_rates=dilation_rates
+        )
+        
+        adb_out_channels = self.adb.out_channels
+        self.se = SEBlock(channels=adb_out_channels)
+        
+        self.transition = TransitionLayer(
+            in_channels=adb_out_channels,
+            theta=theta,
+            p=p_transition
+        )
+        self.out_channels = self.transition.out_channels
+
+    def forward(self, x):
+        """
+        Forward pass of the Adb_SE_Transition_ASPP_like module.
+        """
+        x_adb = self.adb(x)
+        x_se = self.se(x_adb)
+        x_out = self.transition(x_se)
+        
+        return x_out
 
 class FeedForward(nn.Sequential):
     """
@@ -392,14 +374,12 @@ def unfold(input: torch.Tensor,
     :param window_size: (int) Window size to be applied
     :return: (torch.Tensor) Unfolded tensor of the shape [batch size * windows, channels, window size, window size]
     """
-    # Get original shape
-    _, channels, height, width = input.shape 
-    # Unfold input
-    output: torch.Tensor = input.unfold(dimension=3, size=window_size, step=window_size) \
-        .unfold(dimension=2, size=window_size, step=window_size)
-    # Reshape to [batch size * windows, channels, window size, window size]
-    output: torch.Tensor = output.permute(0, 2, 3, 1, 5, 4).reshape(-1, channels, window_size, window_size)
-    return output
+    B, C, H, W = input.shape
+    # [B, C, H, W] -> [B, C, H//ws, ws, W//ws, ws]
+    x = input.view(B, C, H // window_size, window_size, W // window_size, window_size)
+    # -> [B, H//ws, W//ws, C, ws, ws] -> [B*num_windows, C, ws, ws]
+    x = x.permute(0, 2, 4, 1, 3, 5).contiguous().view(-1, C, window_size, window_size)
+    return x
 
 
 def fold(input: torch.Tensor,
@@ -414,15 +394,11 @@ def fold(input: torch.Tensor,
     :param width: (int) Width of the feature map
     :return: (torch.Tensor) Folded output tensor of the shape [batch size, channels, height, width]
     """
-    # Get channels of windows
-    channels: int = input.shape[1]
-    # Get original batch size
-    batch_size: int = int(input.shape[0] // (height * width // window_size // window_size))
-    # Reshape input to
-    output: torch.Tensor = input.view(batch_size, height // window_size, width // window_size, channels,
-                                      window_size, window_size)
-    output: torch.Tensor = output.permute(0, 3, 1, 4, 2, 5).reshape(batch_size, channels, height, width)
-    return output
+    B_windows, C, ws, ws = input.shape
+    batch_size = int(B_windows // (height * width // window_size // window_size))
+    x = input.view(batch_size, height // window_size, width // window_size, C, window_size, window_size)
+    x = x.permute(0, 3, 1, 4, 2, 5).contiguous().view(batch_size, C, height, width)
+    return x
 
 
 class WindowMultiHeadAttention(nn.Module):
@@ -514,95 +490,6 @@ class WindowMultiHeadAttention(nn.Module):
                                                                               self.window_size * self.window_size)
         return relative_position_bias.unsqueeze(0)
 
-    def __self_attention(self,
-                         query: torch.Tensor,
-                         key: torch.Tensor,
-                         value: torch.Tensor,
-                         batch_size_windows: int,
-                         tokens: int,
-                         mask: Optional[torch.Tensor] = None) -> torch.Tensor:
-        """
-        This function performs standard (non-sequential) scaled cosine self-attention
-        :param query: (torch.Tensor) Query tensor of the shape [batch size * windows, heads, tokens, channels // heads]
-        :param key: (torch.Tensor) Key tensor of the shape [batch size * windows, heads, tokens, channels // heads]
-        :param value: (torch.Tensor) Value tensor of the shape [batch size * windows, heads, tokens, channels // heads]
-        :param batch_size_windows: (int) Size of the first dimension of the input tensor (batch size * windows)
-        :param tokens: (int) Number of tokens in the input
-        :param mask: (Optional[torch.Tensor]) Attention mask for the shift case
-        :return: (torch.Tensor) Output feature map of the shape [batch size * windows, tokens, channels]
-        """
-        # Compute attention map with scaled cosine attention
-        attention_map: torch.Tensor = torch.einsum("bhqd, bhkd -> bhqk", query, key) \
-                                      / torch.maximum(torch.norm(query, dim=-1, keepdim=True)
-                                                      * torch.norm(key, dim=-1, keepdim=True).transpose(-2, -1),
-                                                      torch.tensor(1e-06, device=query.device, dtype=query.dtype))
-        attention_map: torch.Tensor = attention_map / self.tau.clamp(min=0.01)
-        # Apply relative positional encodings
-        attention_map: torch.Tensor = attention_map + self.__get_relative_positional_encodings()
-        # Apply mask if utilized
-        if mask is not None:
-            number_of_windows: int = mask.shape[0]
-            attention_map: torch.Tensor = attention_map.view(batch_size_windows // number_of_windows, number_of_windows,
-                                                             self.number_of_heads, tokens, tokens)
-            attention_map: torch.Tensor = attention_map + mask.unsqueeze(1).unsqueeze(0)
-            attention_map: torch.Tensor = attention_map.view(-1, self.number_of_heads, tokens, tokens)
-        attention_map: torch.Tensor = attention_map.softmax(dim=-1)
-        # Perform attention dropout
-        attention_map: torch.Tensor = self.attention_dropout(attention_map)
-        # Apply attention map and reshape
-        output: torch.Tensor = torch.einsum("bhal, bhlv -> bhav", attention_map, value)
-        output: torch.Tensor = output.permute(0, 2, 1, 3).reshape(batch_size_windows, tokens, -1)
-        return output
-
-    def __sequential_self_attention(self,
-                                    query: torch.Tensor,
-                                    key: torch.Tensor,
-                                    value: torch.Tensor,
-                                    batch_size_windows: int,
-                                    tokens: int,
-                                    mask: Optional[torch.Tensor] = None) -> torch.Tensor:
-        """
-        This function performs sequential scaled cosine self-attention
-        :param query: (torch.Tensor) Query tensor of the shape [batch size * windows, heads, tokens, channels // heads]
-        :param key: (torch.Tensor) Key tensor of the shape [batch size * windows, heads, tokens, channels // heads]
-        :param value: (torch.Tensor) Value tensor of the shape [batch size * windows, heads, tokens, channels // heads]
-        :param batch_size_windows: (int) Size of the first dimension of the input tensor (batch size * windows)
-        :param tokens: (int) Number of tokens in the input
-        :param mask: (Optional[torch.Tensor]) Attention mask for the shift case
-        :return: (torch.Tensor) Output feature map of the shape [batch size * windows, tokens, channels]
-        """
-        # Init output tensor
-        output: torch.Tensor = torch.ones_like(query)
-        # Compute relative positional encodings fist
-        relative_position_bias: torch.Tensor = self.__get_relative_positional_encodings()
-        # Iterate over query and key tokens
-        for token_index_query in range(tokens):
-            # Compute attention map with scaled cosine attention
-            attention_map: torch.Tensor = \
-                torch.einsum("bhd, bhkd -> bhk", query[:, :, token_index_query], key) \
-                / torch.maximum(torch.norm(query[:, :, token_index_query], dim=-1, keepdim=True)
-                                * torch.norm(key, dim=-1, keepdim=False),
-                                torch.tensor(1e-06, device=query.device, dtype=query.dtype))
-            attention_map: torch.Tensor = attention_map / self.tau.clamp(min=0.01)[..., 0]
-            # Apply positional encodings
-            attention_map: torch.Tensor = attention_map + relative_position_bias[..., token_index_query, :]
-            # Apply mask if utilized
-            if mask is not None:
-                number_of_windows: int = mask.shape[0]
-                attention_map: torch.Tensor = attention_map.view(batch_size_windows // number_of_windows,
-                                                                 number_of_windows, self.number_of_heads, 1,
-                                                                 tokens)
-                attention_map: torch.Tensor = attention_map \
-                                              + mask.unsqueeze(1).unsqueeze(0)[..., token_index_query, :].unsqueeze(3)
-                attention_map: torch.Tensor = attention_map.view(-1, self.number_of_heads, tokens)
-            attention_map: torch.Tensor = attention_map.softmax(dim=-1)
-            # Perform attention dropout
-            attention_map: torch.Tensor = self.attention_dropout(attention_map)
-            # Apply attention map and reshape
-            output[:, :, token_index_query] = torch.einsum("bhl, bhlv -> bhv", attention_map, value)
-        output: torch.Tensor = output.permute(0, 2, 1, 3).reshape(batch_size_windows, tokens, -1)
-        return output
-
     def forward(self,
                 input: torch.Tensor,
                 mask: Optional[torch.Tensor] = None) -> torch.Tensor:
@@ -615,27 +502,59 @@ class WindowMultiHeadAttention(nn.Module):
         # Save original shape
         batch_size_windows, channels, height, width = input.shape
         tokens: int = height * width
-        # Reshape input to [batch size * windows, tokens (height * width), channels]
-        input: torch.Tensor = input.reshape(batch_size_windows, channels, tokens).permute(0, 2, 1)
+        
+        # Reshape input to [batch size * windows, tokens, channels]
+        x = input.view(batch_size_windows, channels, tokens).permute(0, 2, 1)
+        
         # Perform query, key, and value mapping
-        query_key_value: torch.Tensor = self.mapping_qkv(input)
-        query_key_value: torch.Tensor = query_key_value.view(batch_size_windows, tokens, 3, self.number_of_heads,
-                                                             channels // self.number_of_heads).permute(2, 0, 3, 1, 4)
-        query, key, value = query_key_value[0], query_key_value[1], query_key_value[2]
-        # Perform attention
-        if self.sequential_self_attention:
-            output: torch.Tensor = self.__sequential_self_attention(query=query, key=key, value=value,
-                                                                    batch_size_windows=batch_size_windows,
-                                                                    tokens=tokens,
-                                                                    mask=mask)
-        else:
-            output: torch.Tensor = self.__self_attention(query=query, key=key, value=value,
-                                                         batch_size_windows=batch_size_windows, tokens=tokens,
-                                                         mask=mask)
+        qkv = self.mapping_qkv(x)
+        # [Bw, tokens, 3*C] -> [Bw, tokens, 3, num_heads, head_dim]
+        qkv = qkv.view(batch_size_windows, tokens, 3, self.number_of_heads, channels // self.number_of_heads)
+        # Permute to [3, Bw, num_heads, tokens, head_dim]
+        qkv = qkv.permute(2, 0, 3, 1, 4)
+        query, key, value = qkv[0], qkv[1], qkv[2]
+        
+        # Normalize query and key for cosine attention
+        query = F.normalize(query, p=2, dim=-1, eps=1e-06)
+        key = F.normalize(key, p=2, dim=-1, eps=1e-06)
+        
+        # Scale query by 1/tau
+        # tau: [1, num_heads, 1, 1] -> [1, num_heads, 1, 1]
+        tau = self.tau.clamp(min=0.01)
+        query = query / tau
+        
+        # Prepare attention mask
+        # relative_position_bias: [1, num_heads, tokens, tokens]
+        attn_mask = self.__get_relative_positional_encodings()
+        
+        if mask is not None:
+            # mask: [num_windows, tokens, tokens]
+            # We need to expand mask to match batch size
+            nw = mask.shape[0]
+            bs = batch_size_windows // nw
+            # [nw, tokens, tokens] -> [nw, 1, tokens, tokens] -> [bs*nw, 1, tokens, tokens]
+            mask_expanded = mask.unsqueeze(1).repeat(bs, 1, 1, 1)
+            attn_mask = attn_mask + mask_expanded
+            
+        # Perform Scaled Dot Product Attention
+        # SDPA expects [Batch, Heads, Tokens, Head_Dim]
+        # attn_mask is broadcastable
+        output = F.scaled_dot_product_attention(
+            query, key, value, 
+            attn_mask=attn_mask, 
+            dropout_p=self.attention_dropout.p if self.training else 0.0,
+            scale=1.0
+        )
+        
+        # Reshape output
+        # [Bw, num_heads, tokens, head_dim] -> [Bw, tokens, num_heads, head_dim] -> [Bw, tokens, C]
+        output = output.permute(0, 2, 1, 3).reshape(batch_size_windows, tokens, channels)
+        
         # Perform linear mapping and dropout
-        output: torch.Tensor = self.projection_dropout(self.projection(output))
+        output = self.projection_dropout(self.projection(output))
+        
         # Reshape output to original shape [batch size * windows, channels, height, width]
-        output: torch.Tensor = output.permute(0, 2, 1).view(batch_size_windows, channels, height, width)
+        output = output.permute(0, 2, 1).view(batch_size_windows, channels, height, width)
         return output
 
 
