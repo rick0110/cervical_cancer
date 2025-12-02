@@ -5,22 +5,19 @@ import numpy as np
 import torch
 from sklearn.model_selection import train_test_split, KFold
 import pickle
+from .dataset import augment_data_prepared
 
 maps = {
-    'carcinoma': 1,
-    'dysplastic': 1,
-    'koilocytotic': 1,
+    'koilocytotic': 0,
     'dyskeratotic': 1,
-    'metaplastic': 0,
-    'columnar': 0,
-    'normal-intermediate': 0,
-    'superficial': 0,
-    'parabasal': 0,
-
+    'metaplastic': 2,
+    'superficial': 3,
+    'parabasal': 4
 }
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f'Using device: {device}')
+
 paths = []
 for root, dirs, files in os.walk('./../../data'):
     for file in files:
@@ -46,11 +43,10 @@ k_fold = KFold(n_splits=5, shuffle=True, random_state=42)
 models = {}  #-> model[ state_dict, history{loss_train, acc_train, loss_val, acc_val}, scores{val_acc, val_recall, val_precision}, predictions{val_predictions, val_targets} ]
 fold = 1
 
-model_state_dict = None # torch.load('./checkpoints/kfold_experiment/checkpoint_epoch_50.pth')['model_state_dict']
-
 for train_index, val_index in k_fold.split(df):
     df_train = df.iloc[train_index]
     df_val = df.iloc[val_index]
+    _, paths_aug, df_train = augment_data_prepared(data_dir=None, df_paths=df_train, augmentations_per_image=7)
 
     model, history, scores, predictions = train_swinad2net(
         train_df=df_train,
@@ -66,14 +62,18 @@ for train_index, val_index in k_fold.split(df):
         checkpoint_dir='./checkpoints_256_embed/kfold_experiment',
         device=device,
         log_dir='runs',
-        state_dict=model_state_dict
+        state_dict=None
     )
     models[f'fold_{fold}'] = [model.state_dict(), history, scores, predictions]
+
+    os.makedirs('./checkpoints/kfold_experiment', exist_ok=True)
+    with open('./checkpoints/kfold_experiment/kfold_results.pkl', 'wb') as f:
+        pickle.dump(models, f)
+
     fold += 1
 
-os.makedirs('./checkpoints/kfold_experiment', exist_ok=True)
-with open('./checkpoints/kfold_experiment/kfold_results.pkl', 'wb') as f:
-    pickle.dump(models, f)
+    for path in paths_aug:
+        os.remove(path)
 
 print(f"\n{'='*60}")
 print(f"K-Fold Training Complete!")

@@ -6,7 +6,7 @@ import pytest
 import torch
 from PIL import Image
 
-from src.models.dataset import (
+from src.swinad2net.models.dataset import (
     RandomImageDataset,
     SimpleImageFolder,
     prepare_bmp_only,

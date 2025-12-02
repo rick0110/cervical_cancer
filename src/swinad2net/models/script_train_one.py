@@ -6,7 +6,7 @@
 # It performs data loading, augmentation, model training, and saves training history and graphs.
 # ============================================================================
 
-from train import *
+from .train import *
 import os
 import pandas as pd
 import numpy as np
