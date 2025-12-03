@@ -34,6 +34,7 @@ from sklearn.metrics import accuracy_score, recall_score, precision_score, f1_sc
 def train_swinad2net(
     train_df: pd.DataFrame,
     val_df: pd.DataFrame = None,
+    model: Optional[SwinAD2Net] = None,
     num_classes: int = 2,
     image_size: int = 224,
     embed_dim: int = 128,
@@ -48,6 +49,7 @@ def train_swinad2net(
     log_dir: str = "runs",
     device: str = "cuda",
     state_dict=None
+
 ):
     """Train a SwinAD2Net image classification model.
 
@@ -64,6 +66,7 @@ def train_swinad2net(
         val_df (Optional[pd.DataFrame]): Validation DataFrame with the same
             format as `train_df`. If provided, validation is evaluated every
             epoch and metrics are returned.
+        model (Optional[SwinAD2Net]): Optional SwinAD2Net model instance.
         num_classes (int): Number of classification output classes.
         image_size (int): Input image size (height and width) used by the
             torchvision transforms.
@@ -138,12 +141,7 @@ def train_swinad2net(
         print(f"Train: {len(train_dataset)}\n")
     
     print("Creating model SwinAD2Net...")
-    model = SwinAD2Net(num_classes=num_classes,
-                       embed_dim=embed_dim,
-                       image_size=image_size,
-                       patch_size_embed=patch_size_embed,
-                       growth_rate=growth_rate,
-                       dilation_rates=dilation_rates).to(device)
+    model = model.to(device)
     if state_dict:
         model.load_state_dict(state_dict=state_dict)
     

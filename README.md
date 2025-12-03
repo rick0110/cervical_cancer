@@ -104,10 +104,12 @@ The experiments were conducted using an **NVIDIA RTX A4500 (20 GB)** GPU and in 
 
 The repository is implemented in **PyTorch** and includes:
 
-- `src/models/model.py` - **SwinAD2Net Architecture**: Defines the core `SwinAD2Net` class, which integrates Swin Transformer blocks with Atrous Dense Blocks (ADB) and Squeeze-and-Excitation (SE) modules. It also includes the `PatchEmb` for initial image embedding and the `Adb_SE_Transition` module that combines the dense feature extraction with channel attention and downsampling.
-- `src/models/layers.py` - **Custom Layers**: Implements the building blocks of the network, including:
-    - `AtrousDenseBlock`: A dense block variant using dilated convolutions for multi-scale feature extraction.
+- `src/swinad2net/models/model.py` - **SwinAD2Net Architecture**: Defines the core `SwinAD2Net` and `SwinAD2Net_ASPP_like` (for more paralelization) classes, which integrates Swin Transformer blocks with Atrous Dense Blocks (ADB) and Squeeze-and-Excitation (SE) modules.
+- `src/swinad2net/models/layers.py` - **Custom Layers**: Implements the building blocks of the network, including:
+    - `PatchEmbedding`: Converts input images into patch embeddings.
+    - `AtrousDenseBlock and AtrousDenseBlock_ASPP_like`: A dense block variant using dilated convolutions for multi-scale feature extraction.
     - `TransitionLayer`: Handles downsampling and channel reduction between stages.
+    - `ADB_SE_Transition and ADB_SE_Transition_ASPP_like`: Combines Atrous Dense Block with Squeeze-and-Excitation and TransitionLayer for enhanced feature recalibration.
     - `SwinTransformerBlock`: Wrappers or implementations for the Swin Transformer attention mechanism.
     
 - `src/models/train.py` - **Training Engine**: Contains the `train_swinad2net` function, which manages the full training loop. It handles:
@@ -118,12 +120,14 @@ The repository is implemented in **PyTorch** and includes:
 - `src/models/script_train.py` - **Training Script**: An example script to execute the training pipeline, demonstrating how to set up the dataset, hyperparameters, and initiate the training process, potentially including K-Fold cross-validation logic.
 - `src/models/dataset.py` - **Data Loading**: Implements `RandomImageDataset` (and potentially others), a custom PyTorch `Dataset` class that handles image loading from file paths (via a DataFrame) or generates synthetic data for testing. It integrates with `torchvision.transforms` for data augmentation.
 - `tests/` - **Unit Tests**:
-    - `test_model_full.py`: Verifies the `SwinAD2Net` model instantiation and forward pass with expected input shapes.
+    - `test_dataset.py`: unittest for utilitaries classes and functions related to dataset handling.
+    - `test_model_full.py`: Verifies the `SwinAD2Net and SwinAD2Net_ASPP_like` model instantiation and forward pass with expected input shapes.
     - `test_layers.py`: Tests individual layers like `AtrousDenseBlock` and `TransitionLayer` to ensure correct output dimensions.
-    - `test_dataset.py`: Validates data loading and transformation logic.
+    - `test_train_loop.py`: Tests the training loop.
 
+---
 
-References:
+## References:
 
  - Zhang, Y., et al. (2025). An automatic cervical cell
 classification model based on
