@@ -20,7 +20,7 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f'Using device: {device}')
 
 paths = []
-for root, dirs, files in os.walk('./../../../data'):
+for root, dirs, files in os.walk('./data'):
     for file in files:
         if file.lower().endswith('.bmp'):
             paths.append(os.path.abspath(os.path.join(root, file)))
@@ -67,15 +67,15 @@ for train_index, val_index in k_fold.split(df):
         batch_size=32,
         num_epochs=700,
         learning_rate=1e-3,
-        checkpoint_dir='./checkpoint_ASPP_like_128_embed/kfold_experiment',
+        checkpoint_dir='./src/swinad2net/models/checkpoints/kfold_experiment_ASPP_like_128_embed',
         device=device,
-        log_dir='runs',
+        log_dir='./src/swinad2net/models/SwinAD2Net_ASPP_like/runs',
         state_dict=None
     )
     models[f'fold_{fold}'] = [model.state_dict(), history, scores, predictions]
 
-    os.makedirs('./checkpoints/kfold_experiment_ASPP', exist_ok=True)
-    with open('./checkpoints/kfold_experiment_ASPP/kfold_results.pkl', 'wb') as f:
+    os.makedirs('./src/swinad2net/models/checkpoints/kfold_experiment_ASPP_like_128_embed', exist_ok=True)
+    with open('./src/swinad2net/models/checkpoints/kfold_experiment_ASPP_like_128_embed/kfold_results.pkl', 'wb') as f:
         pickle.dump(models, f)
 
     fold += 1
@@ -85,7 +85,7 @@ for train_index, val_index in k_fold.split(df):
 
 print(f"\n{'='*60}")
 print(f"K-Fold Training Complete!")
-print(f"Results were saved in: ./checkpoints/kfold_experiment_ASPP/kfold_results.pkl")
+print(f"Results were saved in: ./src/swinad2net/models/checkpoints/kfold_experiment_ASPP/kfold_results.pkl")
 print(f"Total folds: {len(models)}")
 print(f"{'='*60}\n")
 
@@ -125,15 +125,15 @@ for train_index, val_index in k_fold.split(df):
         batch_size=32,
         num_epochs=700,
         learning_rate=1e-3,
-        checkpoint_dir='./checkpoints/kfold_experiment_standart_swin_128_embed',
+        checkpoint_dir='./src/swinad2net/models/checkpoints/kfold_experiment_standart_swin_128_embed',
         device=device,
-        log_dir='runs',
+        log_dir='./src/swinad2net/models/SwinAD2Net/runs',
         state_dict=None
     )
     models[f'fold_{fold}'] = [model.state_dict(), history, scores, predictions]
 
-    os.makedirs('./checkpoints/kfold_experiment_standart_swin_128_embed', exist_ok=True)
-    with open('./checkpoints/kfold_experiment_standart_swin_128_embed/kfold_results.pkl', 'wb') as f:
+    os.makedirs('./src/swinad2net/models/checkpoints/kfold_experiment_standart_swin_128_embed', exist_ok=True)
+    with open('./src/swinad2net/models/checkpoints/kfold_experiment_standart_swin_128_embed/kfold_results.pkl', 'wb') as f:
         pickle.dump(models, f)
 
     fold += 1
@@ -143,7 +143,7 @@ for train_index, val_index in k_fold.split(df):
 
 print(f"\n{'='*60}")
 print(f"K-Fold Training Complete!")
-print(f"Results were saved in: ./checkpoints/kfold_experiment_standart_swin_128_embed/kfold_results.pkl")
+print(f"Results were saved in: ./src/swinad2net/models/checkpoints/kfold_experiment_standart_swin_128_embed/kfold_results.pkl")
 print(f"Total folds: {len(models)}")
 print(f"{'='*60}\n")
 
