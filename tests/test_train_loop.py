@@ -75,6 +75,11 @@ class TestTrainSwinAD2Net:
         model, history, scores, preds = train_swinad2net(
             train_df=train_df,
             val_df=None,
+            model=SwinAD2Net(num_classes=2,
+                            embed_dim=32,
+                            image_size=224,
+                            patch_size_embed=4,
+                            growth_rate=8),
             num_classes=2,
             image_size=224,
             embed_dim=32,
@@ -113,6 +118,11 @@ class TestTrainSwinAD2Net:
         model, history, scores, preds = train_swinad2net(
             train_df=train_df,
             val_df=val_df,
+            model=SwinAD2Net(num_classes=2,
+                            embed_dim=32,
+                            image_size=224,
+                            patch_size_embed=4,
+                            growth_rate=8),
             num_classes=2,
             image_size=224,
             embed_dim=32,

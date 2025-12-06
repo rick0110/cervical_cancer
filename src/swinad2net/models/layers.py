@@ -19,6 +19,7 @@ import torch.utils.checkpoint as checkpoint
 import timm
 from typing import Tuple, Optional, List, Union, Any
 from timm.models.layers import SqueezeExcite as SEBlock
+from torch.nn.utils import parametrize
 
 __all__: List[str] = ["SwinTransformerStage",
                       "SwinTransformerBlock",
@@ -76,7 +77,7 @@ class TransitionLayer(nn.Module):
     the number of output feature maps using a compression factor
     theta.
     """
-    def __init__(self, in_channels: int, theta: float, p: float = 0.0):
+    def __init__(self, in_channels: int, theta: float, p: float = 0.2):
         """
         Initialize the different parts of the TransitionBlock.
 
@@ -321,6 +322,55 @@ class Adb_SE_Transition_ASPP_like(nn.Module):
         
         return x_out
 
+class LowRankMatrix(nn.Module):
+    """
+    Low-rank matrix parametrization for linear layers.
+    """
+    def __init__(self, in_features, out_features, rank):
+        """
+        Constructor method
+        :param in_features: (int) Number of input features
+        :param out_features: (int) Number of output features
+        :param rank: (int) Rank of the low-rank approximation
+        """
+        super().__init__()
+        self.P = nn.Parameter(
+            torch.randn(out_features, rank)
+        )
+        self.Q = nn.Parameter(
+            torch.randn(rank, in_features)
+        )
+
+    def forward(self, x):
+        return self.P @ self.Q
+
+def create_low_rank_linear(in_features: int, out_features: int, rank: int, bias: bool = True) -> nn.Linear:
+    """
+    Build a linear layer with low-rank weight parametrization.
+    We approximate the weight matrix W of the linear layer as W = P @ Q,
+    with P: (out_features, rank), Q: (rank, in_features). 
+    Remainder: in pytorch, the weight matrix of nn.Linear is of shape (out_features, in_features), 
+    and the forward pass is y = x @ W^T + b. So W^T = Q^T @ P^T. But it does not matter for our approach.
+
+    params:
+        - in_features: (int) Number of input features
+        - out_features: (int) Number of output features
+        - rank: (int) Rank of the low-rank approximation
+        - bias: (bool) If true, bias is added to the linear layer
+
+    returns:
+        - layer: (nn.Linear) Linear layer with low-rank weight parametrization
+    """
+    layer = nn.Linear(in_features, out_features, bias=bias)
+    
+    parametrize.register_parametrization(
+        layer,                          # The module
+        'weight',                       # The parameter to be modified
+        LowRankMatrix(in_features, out_features, rank) # The module that defines W = P@Q
+    )
+    
+    return layer
+
 class FeedForward(nn.Sequential):
     """
     Feed forward module used in the transformer encoder.
@@ -330,7 +380,8 @@ class FeedForward(nn.Sequential):
                  in_features: int,
                  hidden_features: int,
                  out_features: int,
-                 dropout: float = 0.) -> None:
+                 dropout: float = 0.1,
+                 rank_reduction: float = 0.25) -> None:
         """
         Constructor method
         :param in_features: (int) Number of input features
@@ -340,10 +391,16 @@ class FeedForward(nn.Sequential):
         """
         # Call super constructor and init modules
         super().__init__(
-            nn.Linear(in_features=in_features, out_features=hidden_features),
+            create_low_rank_linear(in_features=in_features,
+                                    out_features=hidden_features,
+                                    rank=int(min(in_features, hidden_features) * rank_reduction)
+                                    ),
             nn.GELU(),
             nn.Dropout(p=dropout),
-            nn.Linear(in_features=hidden_features, out_features=out_features),
+            create_low_rank_linear(in_features=hidden_features,
+                                    out_features=out_features, 
+                                    rank=int(min(hidden_features, out_features) * rank_reduction)
+                                    ),
             nn.Dropout(p=dropout)
         )
 

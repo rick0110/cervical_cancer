@@ -29,7 +29,61 @@ from .model import SwinAD2Net
 from .dataset import SimpleImageFolder
 import numpy as np
 from sklearn.metrics import accuracy_score, recall_score, precision_score, f1_score
+from torch.amp import GradScaler, autocast
 
+class EarlyStopping:
+    """
+    Early stopping utility to halt training when validation loss does not improve.
+    """
+    def __init__(self, patience: int = 20, verbose: bool = False, delta: float = 0.001, path: str = 'checkpoint_in_best_early_stop.pth'):
+        """
+        Args:
+            - patience (int): How long to wait after last time validation loss improved.
+            - verbose (bool): If True, prints a message for each validation loss improvement.
+            - delta (float): Minimum change in the monitored quantity to qualify as an improvement.
+            - path (str): Path to save the model checkpoint.
+        """
+        self.patience = patience
+        self.verbose = verbose
+        self.delta = delta
+        self.path = path
+        self.counter = 0
+        self.best_score = float('-inf')
+        self.val_loss_min = float('inf')
+        self.best_state_dict = None
+        self.early_stop = False
+
+    def __call__(self, val_loss: float, model: nn.Module):
+        """
+        Call method to check if early stopping condition is met.
+        
+        Args:
+            - val_loss (float): Current validation loss.
+            - model (nn.Module): Model to save if validation loss improves.
+        """
+        score = -val_loss
+
+        if score < self.best_score + self.delta:
+            self.counter += 1
+            if self.verbose:
+                print(f'EarlyStopping counter: {self.counter} out of {self.patience}')
+            if self.counter >= self.patience:
+                self.early_stop = True
+        else:
+            self.best_score = score
+            self.counter = 0
+            self.best_state_dict = model.state_dict()
+
+    def save_checkpoint(self):
+        """
+        Saves model when validation loss decreases.
+        
+        Args:
+            - model (nn.Module): Model to save.
+        """
+        torch.save(self.best_state_dict, self.path)
+        if self.verbose:
+            print(f'The best model saved by early stopping!')
 
 def train_swinad2net(
     train_df: pd.DataFrame,
@@ -103,9 +157,27 @@ def train_swinad2net(
         - TensorBoard logs are written to `log_dir`. Run
           `tensorboard --logdir {log_dir}` to visualize training progress.
     """
-    
+
+    early_stopping = EarlyStopping(patience=20, verbose=True, path=os.path.join(checkpoint_dir, 'checkpoint_in_best_early_stop.pth'))
+    use_amp = device.startswith('cuda') and torch.cuda.is_available()
+    scaler = GradScaler("cuda") if use_amp else None
+    DTYPE = torch.float16 # is only used in amp optimization with nvidia gpu
+
+    if torch.cuda.is_available():
+        try:
+            torch.backends.cuda.sdp_kernel(
+                enable_flash=True,
+                enable_mem_efficient=True,
+                enable_math=False
+            )
+            print("torch.backends.cuda.sdp_kernel: trying to enable FlashAttention.")
+        except AttributeError:
+            print("sdp_kernel is not available")
+    else:
+        print("CUDA not detected — SDPA/FlashAttention will not be used.")
+        
     print(f"\n{'='*60}")
-    print(f"Treinamento do SwinAD2Net")
+    print(f"Training SwinAD2Net")
     print(f"Device: {device} | Classes: {num_classes} | Epochs: {num_epochs}")
     print(f"{'='*60}\n")
     
@@ -144,6 +216,8 @@ def train_swinad2net(
     model = model.to(device)
     if state_dict:
         model.load_state_dict(state_dict=state_dict)
+
+    model = torch.compile(model=model, mode='max-autotune')
     
     print(f"Parameters: {sum(p.numel() for p in model.parameters()):,}\n")
     
@@ -162,7 +236,7 @@ def train_swinad2net(
     writer = SummaryWriter(log_dir=log_dir)
     best_val_acc = 0.0
     history = {'loss_train': [], 'acc_train': [], 'loss_val': [], 'acc_val': []}
-    
+
     for epoch in range(1, num_epochs + 1):
         print(f"\nEpoch {epoch}/{num_epochs}")
         print("-" * 40)
@@ -175,10 +249,19 @@ def train_swinad2net(
             inputs, labels = inputs.to(device), labels.to(device)
             
             optimizer.zero_grad()
-            outputs = model(inputs)
-            loss = criterion(outputs, labels)
-            loss.backward()
-            optimizer.step()
+            if use_amp:
+                with autocast(device_type=device, dtype=DTYPE):
+                    outputs = model(inputs)
+                    loss = criterion(outputs, labels)
+
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
+            else: 
+                outputs = model(inputs)
+                loss = criterion(outputs, labels)
+                loss.backward()
+                optimizer.step()
             
             running_loss += loss.item() * inputs.size(0)
             _, predicted = torch.max(outputs.data, 1)
@@ -226,7 +309,7 @@ def train_swinad2net(
                 best_val_acc = val_acc
                 torch.save({'epoch': epoch, 'model_state_dict': model.state_dict(), 
                            'val_acc': val_acc}, os.path.join(checkpoint_dir, "best_model.pth"))
-                print(f"✓ Melhor modelo salvo! (Val Acc: {val_acc:.2f}%)")
+                print(f"✓ better model saved! (Val Acc: {val_acc:.2f}%)")
         
         if epoch <= warmup_epochs:
             warmup_scheduler.step()
@@ -239,6 +322,13 @@ def train_swinad2net(
             torch.save({'epoch': epoch, 'model_state_dict': model.state_dict()},
                       os.path.join(checkpoint_dir, f"checkpoint_epoch_{epoch}.pth"))
             print(f"✓ Checkpoint salvo: epoch_{epoch}")
+
+        early_stopping(val_loss if val_loader is not None else train_loss, model)
+        if early_stopping.early_stop:
+            if input("Early stopping triggered. Stop training? (y/n): ").lower() == 'y':
+                print("Early stopping activated. Ending training.")
+                early_stopping.save_checkpoint()
+                break
     
     torch.save({'model_state_dict': model.state_dict()}, os.path.join(checkpoint_dir, "final_model.pth"))
     writer.close()
