@@ -70,7 +70,8 @@ for train_index, val_index in k_fold.split(df):
         checkpoint_dir=f'./src/swinad2net/models/checkpoints/kfold_experiment_ASPP_like_128_embed/fold_{fold}',
         device=device,
         log_dir=f'./src/swinad2net/models/SwinAD2Net_ASPP_like/foldruns/fold_{fold}',
-        state_dict=None
+        state_dict=None,
+        epoch_stopped=None
     )
     models[f'fold_{fold}'] = [model.state_dict(), history, scores, predictions]
 
