@@ -630,7 +630,8 @@ class SwinTransformerBlock(nn.Module):
                  dropout: float = 0.1,
                  dropout_attention: float = 0.1,
                  dropout_path: float = 0.0,
-                 sequential_self_attention: bool = False) -> None:
+                 sequential_self_attention: bool = False,
+                 rank_reduction: float = 0.25) -> None:
         """
         Constructor method
         :param in_channels: (int) Number of input channels
@@ -643,6 +644,7 @@ class SwinTransformerBlock(nn.Module):
         :param dropout_attention: (float) Dropout rate of attention map
         :param dropout_path: (float) Dropout in main path
         :param sequential_self_attention: (bool) If true sequential self-attention is performed
+        :param rank_reduction (float) Ratio for the low-rank approximation in the linear layers
         """
         # Call super constructor
         super(SwinTransformerBlock, self).__init__()
@@ -676,7 +678,8 @@ class SwinTransformerBlock(nn.Module):
         self.feed_forward_network: nn.Module = FeedForward(in_features=in_channels,
                                                            hidden_features=int(in_channels * ff_feature_ratio),
                                                            dropout=dropout,
-                                                           out_features=in_channels)
+                                                           out_features=in_channels,
+                                                           rank_reduction = rank_reduction)
         # Make attention mask
         self.__make_attention_mask()
 

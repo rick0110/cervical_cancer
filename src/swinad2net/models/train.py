@@ -102,7 +102,8 @@ def train_swinad2net(
     checkpoint_dir: str = "checkpoints",
     log_dir: str = "runs",
     device: str = "cuda",
-    state_dict=None
+    state_dict=None,
+    epoch_stopped: int = None
 
 ):
     """Train a SwinAD2Net image classification model.
@@ -161,7 +162,7 @@ def train_swinad2net(
     early_stopping = EarlyStopping(patience=20, verbose=True, path=os.path.join(checkpoint_dir, 'checkpoint_in_best_early_stop.pth'))
     use_amp = device.startswith('cuda') and torch.cuda.is_available()
     scaler = GradScaler("cuda") if use_amp else None
-    DTYPE = torch.float16 # is only used in amp optimization with nvidia gpu
+    DTYPE = torch.bfloat16 # is only used in amp optimization with nvidia gpu
 
     if torch.cuda.is_available():
         try:
@@ -175,7 +176,7 @@ def train_swinad2net(
             print("sdp_kernel is not available")
     else:
         print("CUDA not detected — SDPA/FlashAttention will not be used.")
-        
+
     print(f"\n{'='*60}")
     print(f"Training SwinAD2Net")
     print(f"Device: {device} | Classes: {num_classes} | Epochs: {num_epochs}")
@@ -237,7 +238,7 @@ def train_swinad2net(
     best_val_acc = 0.0
     history = {'loss_train': [], 'acc_train': [], 'loss_val': [], 'acc_val': []}
 
-    for epoch in range(1, num_epochs + 1):
+    for epoch in range(epoch_stopped + 1 if epoch_stopped is not None else 1, num_epochs + 1):
         print(f"\nEpoch {epoch}/{num_epochs}")
         print("-" * 40)
         

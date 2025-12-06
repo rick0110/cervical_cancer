@@ -67,15 +67,15 @@ for train_index, val_index in k_fold.split(df):
         batch_size=32,
         num_epochs=700,
         learning_rate=1e-3,
-        checkpoint_dir='./src/swinad2net/models/checkpoints/kfold_experiment_ASPP_like_128_embed',
+        checkpoint_dir=f'./src/swinad2net/models/checkpoints/kfold_experiment_ASPP_like_128_embed/fold_{fold}',
         device=device,
-        log_dir='./src/swinad2net/models/SwinAD2Net_ASPP_like/runs',
+        log_dir=f'./src/swinad2net/models/SwinAD2Net_ASPP_like/foldruns/fold_{fold}',
         state_dict=None
     )
     models[f'fold_{fold}'] = [model.state_dict(), history, scores, predictions]
 
-    os.makedirs('./src/swinad2net/models/checkpoints/kfold_experiment_ASPP_like_128_embed', exist_ok=True)
-    with open('./src/swinad2net/models/checkpoints/kfold_experiment_ASPP_like_128_embed/kfold_results.pkl', 'wb') as f:
+    os.makedirs(f'./src/swinad2net/models/checkpoints/kfold_experiment_ASPP_like_128_embed', exist_ok=True)
+    with open(f'./src/swinad2net/models/checkpoints/kfold_experiment_ASPP_like_128_embed/kfold_results.pkl', 'wb') as f:
         pickle.dump(models, f)
 
     fold += 1
@@ -85,7 +85,7 @@ for train_index, val_index in k_fold.split(df):
 
 print(f"\n{'='*60}")
 print(f"K-Fold Training Complete!")
-print(f"Results were saved in: ./src/swinad2net/models/checkpoints/kfold_experiment_ASPP/kfold_results.pkl")
+print(f"Results were saved in: ./src/swinad2net/models/checkpoints/kfold_experiment_ASPP_like_128_embed/kfold_results.pkl")
 print(f"Total folds: {len(models)}")
 print(f"{'='*60}\n")
 
@@ -125,14 +125,14 @@ for train_index, val_index in k_fold.split(df):
         batch_size=32,
         num_epochs=700,
         learning_rate=1e-3,
-        checkpoint_dir='./src/swinad2net/models/checkpoints/kfold_experiment_standart_swin_128_embed',
+        checkpoint_dir=f'./src/swinad2net/models/checkpoints/kfold_experiment_standart_swin_128_embed/fold_{fold}',
         device=device,
-        log_dir='./src/swinad2net/models/SwinAD2Net/runs',
+        log_dir=f'./src/swinad2net/models/SwinAD2Net/foldruns/fold_{fold}',
         state_dict=None
     )
     models[f'fold_{fold}'] = [model.state_dict(), history, scores, predictions]
 
-    os.makedirs('./src/swinad2net/models/checkpoints/kfold_experiment_standart_swin_128_embed', exist_ok=True)
+    os.makedirs('./src/swinad2net/models/checkpoints/kfold_experiment   _standart_swin_128_embed', exist_ok=True)
     with open('./src/swinad2net/models/checkpoints/kfold_experiment_standart_swin_128_embed/kfold_results.pkl', 'wb') as f:
         pickle.dump(models, f)
 
