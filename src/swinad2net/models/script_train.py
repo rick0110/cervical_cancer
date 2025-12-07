@@ -8,13 +8,13 @@ import pickle
 from .dataset import augment_data_prepared
 from .model import SwinAD2Net, SwinAD2Net_ASPP_like
 
-maps = {
-    'koilocytotic': 0,
-    'dyskeratotic': 1,
-    'metaplastic': 2,
-    'superficial': 3,
-    'parabasal': 4
-}
+#maps = {
+#    'koilocytotic': 0,
+#    'dyskeratotic': 1,
+#    'metaplastic': 2,
+#    'superficial': 3,
+#    'parabasal': 4
+#}
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f'Using device: {device}')
@@ -22,10 +22,15 @@ print(f'Using device: {device}')
 paths = []
 for root, dirs, files in os.walk('./data'):
     for file in files:
-        if file.lower().endswith('.bmp'):
-            paths.append(os.path.abspath(os.path.join(root, file)))
+        #if file.lower().endswith('.bmp'):
+        paths.append(os.path.join(root, file))
+
 
 df = pd.DataFrame({'path': paths})
+df["classes"] = df['path'].apply(lambda x: x[24: x.find('/', 24)])  # adjust according to your path structure
+unique_classes = df["classes"].unique().tolist()
+maps = {class_name: idx for idx, class_name in enumerate(unique_classes)}
+df.drop(columns=["classes"], inplace=True)
 
 def label_map_from_path(path):
     # use global maps
