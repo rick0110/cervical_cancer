@@ -10,6 +10,7 @@ import os
 import tqdm
 import shutil
 import py7zr
+import tarfile
 from typing import Optional, Tuple, List, Dict
 
 def download_dataset(url: str, save_dir: str, compact_format: str = "7z") -> None:
@@ -51,6 +52,17 @@ def download_dataset(url: str, save_dir: str, compact_format: str = "7z") -> Non
         try:
             with py7zr.SevenZipFile('./temporary_downloads/dataset', mode='r') as z:
                 z.extractall(path=save_dir)
+            print(f"Dataset extracted to {save_dir}.")
+        except Exception as e:
+            print(f"Error extracting dataset: {e}")
+        finally:
+            shutil.rmtree('./temporary_downloads', ignore_errors=True)
+        shutil.rmtree('./temporary_downloads', ignore_errors=True)
+        return
+    elif compact_format == "tar":
+        try:
+            with tarfile.open('./temporary_downloads/dataset', 'r') as tar:
+                tar.extractall(path=save_dir)
             print(f"Dataset extracted to {save_dir}.")
         except Exception as e:
             print(f"Error extracting dataset: {e}")
