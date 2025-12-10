@@ -224,6 +224,9 @@ def train_swinad2net(
     
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+    for param_group in optimizer.param_groups:
+        if 'initial_lr' not in param_group:
+            param_group['initial_lr'] = param_group.get('lr', learning_rate)
 
     warmup_epochs = 15
     def warmup_lr(epoch):
@@ -231,8 +234,8 @@ def train_swinad2net(
             return (epoch + 1) / warmup_epochs
         return 1.0
     
-    warmup_scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=warmup_lr)
-    cosine_annealing_scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs-warmup_epochs)
+    warmup_scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=warmup_lr, last_epoch = epoch_stopped if epoch_stopped is not None else -1)
+    cosine_annealing_scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs-warmup_epochs, last_epoch=epoch_stopped if epoch_stopped is not None else -1)
 
     writer = SummaryWriter(log_dir=log_dir)
     best_val_acc = 0.0

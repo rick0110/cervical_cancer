@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from .layers import *
-from typing import Optional, List
+from typing import Optional, List, Tuple
 
 class SwinAD2Net(nn.Module):
     """
@@ -120,6 +120,72 @@ class SwinAD2Net(nn.Module):
         
         return x
 
+
+class Densenet121(nn.Module):
+    """
+    DenseNet-121 backbone as described in Zhang et al. (2025) with the standard
+    bottleneck layout and transition layers.
+    """
+
+    def __init__(self,
+                 num_classes: int = 2,
+                 growth_rate: int = 32,
+                 block_config: Tuple[int, ...] = (6, 12, 24, 16),
+                 bn_size: int = 4,
+                 drop_rate: float = 0.0,
+                 num_init_features: int = 64,
+                 compression: float = 0.5,
+                 in_channels: int = 3) -> None:
+        super().__init__()
+
+        # Stem: 7x7 conv + BN + ReLU + 3x3 max pool
+        self.features = nn.Sequential(
+            nn.Conv2d(in_channels, num_init_features, kernel_size=7, stride=2, padding=3, bias=False),
+            nn.BatchNorm2d(num_init_features),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(kernel_size=3, stride=2, padding=1),
+        )
+
+        num_features = num_init_features
+        for i, num_layers in enumerate(block_config):
+            block = DenseBlock(num_layers=num_layers,
+                               in_channels=num_features,
+                               growth_rate=growth_rate,
+                               bn_size=bn_size,
+                               drop_rate=drop_rate)
+            self.features.add_module(f"denseblock{i + 1}", block)
+            num_features = block.out_channels
+
+            if i != len(block_config) - 1:
+                transition = TransitionLayer(in_channels=num_features,
+                                             theta=compression,
+                                             p=drop_rate)
+                self.features.add_module(f"transition{i + 1}", transition)
+                num_features = transition.out_channels
+
+        self.features.add_module("norm_final", nn.BatchNorm2d(num_features))
+        self.classifier = nn.Linear(num_features, num_classes)
+
+        self._initialize_weights()
+
+    def _initialize_weights(self) -> None:
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.Linear):
+                nn.init.normal_(m.weight, 0, 0.01)
+                nn.init.constant_(m.bias, 0)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        features = self.features(x)
+        out = F.relu(features, inplace=True)
+        out = F.adaptive_avg_pool2d(out, (1, 1)).flatten(1)
+        out = self.classifier(out)
+        return out
+
 class SwinAD2Net_ASPP_like(nn.Module):
     """
     SwinAD2Net model combining Swin Transformer blocks with Atrous Dense Blocks (ASPP-like) and SE transitions.
@@ -236,3 +302,6 @@ class SwinAD2Net_ASPP_like(nn.Module):
         x = self.classifier(x)  # [B, num_classes]
         
         return x
+
+
+

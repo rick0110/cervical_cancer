@@ -25,6 +25,8 @@ __all__: List[str] = ["SwinTransformerStage",
                       "SwinTransformerBlock",
                       "DeformableSwinTransformerBlock",
                       "TransitionLayer",
+                      "DenseLayer",
+                      "DenseBlock",
                       "PatchEmb",
                       "Adb_SE_Transition",
                       "Adb_SE_Transition_ASPP_like",]
@@ -112,6 +114,74 @@ class TransitionLayer(nn.Module):
         if self.p > 0:
             out = F.dropout(out, p=self.p, training=self.training)
         return out
+
+
+class DenseLayer(nn.Module):
+    """
+    Single bottleneck layer used inside a DenseBlock (BN-ReLU-1x1 Conv followed by BN-ReLU-3x3 Conv).
+    The implementation mirrors the layout described in DenseNet, optionally applying dropout after the
+    last convolution.
+    """
+
+    def __init__(self,
+                 in_channels: int,
+                 growth_rate: int,
+                 bn_size: int = 4,
+                 drop_rate: float = 0.0) -> None:
+        super().__init__()
+        inter_channels = bn_size * growth_rate
+        self.norm1 = nn.BatchNorm2d(in_channels)
+        self.relu1 = nn.ReLU(inplace=True)
+        self.conv1 = nn.Conv2d(in_channels, inter_channels, kernel_size=1, stride=1, bias=False)
+
+        self.norm2 = nn.BatchNorm2d(inter_channels)
+        self.relu2 = nn.ReLU(inplace=True)
+        self.conv2 = nn.Conv2d(inter_channels, growth_rate, kernel_size=3, stride=1, padding=1, bias=False)
+
+        self.drop_rate = drop_rate
+
+    def forward(self, features: Union[torch.Tensor, List[torch.Tensor]]) -> torch.Tensor:
+        # Accept either a single tensor or a list of previous features for easier reuse.
+        if isinstance(features, torch.Tensor):
+            concatenated = features
+        else:
+            concatenated = torch.cat(features, dim=1)
+
+        new_features = self.conv1(self.relu1(self.norm1(concatenated)))
+        new_features = self.conv2(self.relu2(self.norm2(new_features)))
+
+        if self.drop_rate > 0.0:
+            new_features = F.dropout(new_features, p=self.drop_rate, training=self.training)
+        return new_features
+
+
+class DenseBlock(nn.Module):
+    """
+    Stacks multiple DenseLayer modules, concatenating their outputs channel-wise as in DenseNet.
+    """
+
+    def __init__(self,
+                 num_layers: int,
+                 in_channels: int,
+                 growth_rate: int,
+                 bn_size: int = 4,
+                 drop_rate: float = 0.0) -> None:
+        super().__init__()
+        layers: List[DenseLayer] = []
+        channels = in_channels
+        for _ in range(num_layers):
+            layer = DenseLayer(channels, growth_rate, bn_size=bn_size, drop_rate=drop_rate)
+            layers.append(layer)
+            channels += growth_rate
+        self.layers = nn.ModuleList(layers)
+        self.out_channels = channels
+
+    def forward(self, init_features: torch.Tensor) -> torch.Tensor:
+        features: List[torch.Tensor] = [init_features]
+        for layer in self.layers:
+            new_feature = layer(features)
+            features.append(new_feature)
+        return torch.cat(features, dim=1)
     
 class AtrousDenseBlock(nn.Module):
     """

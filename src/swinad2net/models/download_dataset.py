@@ -87,24 +87,24 @@ def download_dataset(url: str, save_dir: str, compact_format: str = "7z") -> Non
 
 
 if __name__ == "__main__":
-    #dict_urls = {
-    #    "superficial-intermediate": ('https://www.cs.uoi.gr/~marina/SIPAKMED/im_Superficial-Intermediate.7z', '7z'),
-    #    "parabasal": ('https://www.cs.uoi.gr/~marina/SIPAKMED/im_Parabasal.7z', '7z'),
-    #    "koilocytotic": ('https://www.cs.uoi.gr/~marina/SIPAKMED/im_Koilocytotic.7z', '7z'),
-    #    "metaplastic": ('https://www.cs.uoi.gr/~marina/SIPAKMED/im_Metaplastic.7z', '7z'),
-    #    "dyskeratotic": ('https://www.cs.uoi.gr/~marina/SIPAKMED/im_Dyskeratotic.7z', '7z')
-    #}
-    #for class_name, (url, compact_format) in dict_urls.items():
-    #    os.makedirs('./data', exist_ok=True)
-    #    save_directory = os.path.join('./data', class_name)
-    #    download_dataset(url, save_directory)
+    dict_urls = {
+        "superficial-intermediate": ('https://www.cs.uoi.gr/~marina/SIPAKMED/im_Superficial-Intermediate.7z', '7z'),
+        "parabasal": ('https://www.cs.uoi.gr/~marina/SIPAKMED/im_Parabasal.7z', '7z'),
+        "koilocytotic": ('https://www.cs.uoi.gr/~marina/SIPAKMED/im_Koilocytotic.7z', '7z'),
+        "metaplastic": ('https://www.cs.uoi.gr/~marina/SIPAKMED/im_Metaplastic.7z', '7z'),
+        "dyskeratotic": ('https://www.cs.uoi.gr/~marina/SIPAKMED/im_Dyskeratotic.7z', '7z')
+    }
+    for class_name, (url, compact_format) in dict_urls.items():
+        os.makedirs('./data', exist_ok=True)
+        save_directory = os.path.join('./data', class_name)
+        download_dataset(url, save_directory)
 
-    os.makedirs("./imagenet", exist_ok=True)
-    download_dataset(
-        url="https://image-net.org/data/ILSVRC/blurred/train_blurred.tar.gz",
-        save_dir="./imagenet",
-        compact_format="tar"
-    )
+    #os.makedirs("./imagenet", exist_ok=True)
+    #download_dataset(
+    #    url="https://image-net.org/data/ILSVRC/blurred/train_blurred.tar.gz",
+    #    save_dir="./imagenet",
+    #    compact_format="tar"
+    #)
 
 
 
