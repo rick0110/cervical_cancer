@@ -59,7 +59,7 @@ for train_index, val_index in k_fold.split(df):
                         embed_dim=128,
                         image_size=224,
                         patch_size_embed=4,
-                        growth_rate=32,
+                        growth_rate=16,
                         dilation_rates=[1, 2, 3],
                         compression_rates=[0.1, 0.1, 0.1]),
         batch_size=8,
