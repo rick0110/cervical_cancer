@@ -26,6 +26,8 @@ checkpoints/
 *.pth
 *.pt
 *.BMP
+imagenet/
+model_imagenet/
 # Jupyter
 .ipynb_checkpoints/
 
