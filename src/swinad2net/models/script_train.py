@@ -56,17 +56,17 @@ for train_index, val_index in k_fold.split(df):
         train_df=df_train,
         val_df=df_val,
         model=SwinAD2Net_ASPP_like(num_classes=5,
-                        embed_dim=128,
+                        embed_dim=64,
                         image_size=224,
                         patch_size_embed=4,
                         growth_rate=16,
                         dilation_rates=[1, 2, 3],
-                        compression_rates=[0.1, 0.1, 0.1]),
+                        compression_rates=[0.25, 0.25, 0.25]),
         batch_size=8,
         num_epochs=400,
         patience=40,
         learning_rate=1e-4,
-        checkpoint_dir=f'./src/swinad2net/models/checkpoints/kfold_experiment_ASPP_like_128_embed/fold_{fold}',
+        checkpoint_dir=f'./src/swinad2net/models/checkpoints/kfold_experiment_ASPP_like_64_embed/fold_{fold}',
         device=device,
         log_dir=f'./src/swinad2net/models/SwinAD2Net_ASPP_like/foldruns/fold_{fold}',
         state_dict=None,
@@ -74,8 +74,8 @@ for train_index, val_index in k_fold.split(df):
     )
     models[f'fold_{fold}'] = [model.state_dict(), history, scores, predictions]
 
-    os.makedirs(f'./src/swinad2net/models/checkpoints/kfold_experiment_ASPP_like_128_embed', exist_ok=True)
-    with open(f'./src/swinad2net/models/checkpoints/kfold_experiment_ASPP_like_128_embed/kfold_results.pkl', 'wb') as f:
+    os.makedirs(f'./src/swinad2net/models/checkpoints/kfold_experiment_ASPP_like_64_embed', exist_ok=True)
+    with open(f'./src/swinad2net/models/checkpoints/kfold_experiment_ASPP_like_64_embed/kfold_results.pkl', 'wb') as f:
         pickle.dump(models, f)
 
     fold += 1
