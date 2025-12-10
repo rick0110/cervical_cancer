@@ -217,25 +217,25 @@ def train_swinad2net(
     model = model.to(device)
     if state_dict:
         model.load_state_dict(state_dict=state_dict)
-
-    model = torch.compile(model=model, mode='max-autotune')
     
     print(f"Parameters: {sum(p.numel() for p in model.parameters()):,}\n")
     
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
-    for param_group in optimizer.param_groups:
-        if 'initial_lr' not in param_group:
-            param_group['initial_lr'] = param_group.get('lr', learning_rate)
+    optimizer = optim.SGD(model.parameters(), lr=learning_rate, momentum=0.9, weight_decay=weight_decay)
+    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)
 
-    warmup_epochs = 15
-    def warmup_lr(epoch):
-        if epoch < warmup_epochs:
-            return (epoch + 1) / warmup_epochs
-        return 1.0
-    
-    warmup_scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=warmup_lr, last_epoch = epoch_stopped if epoch_stopped is not None else -1)
-    cosine_annealing_scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs-warmup_epochs, last_epoch=epoch_stopped if epoch_stopped is not None else -1)
+    #for param_group in optimizer.param_groups:
+    #    if 'initial_lr' not in param_group:
+    #        param_group['initial_lr'] = param_group.get('lr', learning_rate)
+
+    #warmup_epochs = 15
+    #def warmup_lr(epoch):
+    #    if epoch < warmup_epochs:
+    #        return (epoch + 1) / warmup_epochs
+    #    return 1.0
+    #
+    #warmup_scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=warmup_lr, last_epoch = epoch_stopped if epoch_stopped is not None else -1)
+    #cosine_annealing_scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs-warmup_epochs, last_epoch=epoch_stopped if epoch_stopped is not None else -1)
 
     writer = SummaryWriter(log_dir=log_dir)
     best_val_acc = 0.0
@@ -315,10 +315,11 @@ def train_swinad2net(
                            'val_acc': val_acc}, os.path.join(checkpoint_dir, "best_model.pth"))
                 print(f"✓ better model saved! (Val Acc: {val_acc:.2f}%)")
         
-        if epoch <= warmup_epochs:
-            warmup_scheduler.step()
-        else:
-            cosine_annealing_scheduler.step()
+        scheduler.step()
+        #if epoch <= warmup_epochs:
+        #    warmup_scheduler.step()
+        #else:
+        #    cosine_annealing_scheduler.step()
 
         writer.add_scalar('Learning_Rate', optimizer.param_groups[0]['lr'], epoch)
         

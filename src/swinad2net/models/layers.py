@@ -240,7 +240,10 @@ class AtrousDenseBlock_ASPP_like(nn.Module):
     between their channels, this block executes each convolution in parallel and concatenates the results.  
     Replaces the sequential DenseNet-like structure to allow parallel execution.
     """
-    def __init__(self, in_channels: int, growth_rate: int, dilation_rates: list = [1, 2, 3]):
+    def __init__(self, in_channels: int,
+                 growth_rate: int,
+                 dilation_rates: list = [1, 2, 3],
+                 compression_rate: float = 0.25):
         """
         Initialize the parameters of the Atrous Dense Block ASPP-like.
 
@@ -254,15 +257,26 @@ class AtrousDenseBlock_ASPP_like(nn.Module):
         - branches (nn.ModuleList): list of parallel convolutional branches.
         - out_channels (int): number of output channels after concatenation.
         - final_layer (nn.Sequential): final convolutional layer to process concatenated output. 
+        compression_rate (float): compression rate for the bottleneck layers in each branch.
         """
+    
         super().__init__()
         self.branches = nn.ModuleList()
+        inter_channels = max(1, int(in_channels * compression_rate))
+
         for d in dilation_rates:
-            self.branches.append(nn.Sequential(
-                nn.Conv2d(in_channels, growth_rate, kernel_size=3, padding=d, dilation=d, bias=False),
-                nn.BatchNorm2d(growth_rate),
-                nn.ReLU(inplace=True)
-            ))
+            if self.use_bottleneck:
+                # 1x1 bottleneck -> 3x3 atrous -> BN + ReLU
+                self.branches.append(nn.Sequential(
+                    nn.BatchNorm2d(in_channels),
+                    nn.ReLU(inplace=True),
+                    nn.Conv2d(in_channels, inter_channels, kernel_size=1, bias=False),
+                    nn.BatchNorm2d(inter_channels),
+                    nn.ReLU(inplace=True),
+                    nn.Conv2d(inter_channels, growth_rate, kernel_size=3, padding=d, dilation=d, bias=False),
+                    nn.BatchNorm2d(growth_rate),
+                    nn.ReLU(inplace=True)
+                ))
         self.out_channels = in_channels + len(dilation_rates) * growth_rate
 
         self.final_layer = nn.Sequential(
@@ -701,7 +715,7 @@ class SwinTransformerBlock(nn.Module):
                  dropout_attention: float = 0.1,
                  dropout_path: float = 0.0,
                  sequential_self_attention: bool = False,
-                 rank_reduction: float = 0.25) -> None:
+                 rank_reduction: float = 0.1) -> None:
         """
         Constructor method
         :param in_channels: (int) Number of input channels
