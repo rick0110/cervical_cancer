@@ -89,7 +89,6 @@ def train_swinad2net(
     train_df: pd.DataFrame,
     val_df: pd.DataFrame = None,
     model: Optional[SwinAD2Net] = None,
-    num_classes: int = 2,
     image_size: int = 224,
     batch_size: int = 16,
     num_epochs: int = 50,
@@ -158,6 +157,7 @@ def train_swinad2net(
     use_amp = device.startswith('cuda') and torch.cuda.is_available()
     scaler = GradScaler("cuda") if use_amp else None
     DTYPE = torch.bfloat16 # is only used in amp optimization with nvidia gpu
+    num_classes = model.num_classes
 
     if torch.cuda.is_available():
         try:
@@ -173,7 +173,7 @@ def train_swinad2net(
         print("CUDA not detected — SDPA/FlashAttention will not be used.")
 
     print(f"\n{'='*60}")
-    print(f"Training SwinAD2Net")
+    print(f"Training: ")
     print(f"Device: {device} | Classes: {num_classes} | Epochs: {num_epochs}")
     print(f"{'='*60}\n")
     

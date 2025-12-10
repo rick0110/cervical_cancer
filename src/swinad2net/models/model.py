@@ -34,8 +34,11 @@ class SwinAD2Net(nn.Module):
             - self.adb_se_transX: Atrous Dense Block with SE and Transition for each stage.
             - self.global_pool: Global average pooling layer.
             - self.classifier: Fully connected layer for classification.
+            - self.num_classes: Number of output classes.
         """
         super(SwinAD2Net, self).__init__()
+
+        self.num_classes = num_classes
         
         # Patch Embedding
         self.patch_emb = PatchEmb(patch_size=patch_size_embed, in_channels=3, embed_dim=embed_dim)
@@ -138,6 +141,8 @@ class Densenet121(nn.Module):
                  in_channels: int = 3) -> None:
         super().__init__()
 
+        self.num_classes = num_classes
+
         # Stem: 7x7 conv + BN + ReLU + 3x3 max pool
         self.features = nn.Sequential(
             nn.Conv2d(in_channels, num_init_features, kernel_size=7, stride=2, padding=3, bias=False),
@@ -212,14 +217,17 @@ class SwinAD2Net_ASPP_like(nn.Module):
 
         Params
         ------
+            - self.num_classes: Number of output classes.
             - self.patch_emb: Patch embedding layer.
             - self.swin_blockX_Y: Swin Transformer blocks for each stage.
             - self.adb_se_transX: Atrous Dense Block (ASPP-like) with SE and Transition for each stage.
             - self.global_pool: Global average pooling layer.
             - self.classifier: Fully connected layer for classification.
-            
+
         """
         super(SwinAD2Net_ASPP_like, self).__init__()
+
+        self.num_classes = num_classes
         
         # Patch Embedding
         self.patch_emb = PatchEmb(patch_size=patch_size_embed, in_channels=3, embed_dim=embed_dim)
