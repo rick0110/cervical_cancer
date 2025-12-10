@@ -27,10 +27,6 @@ for root, dirs, files in os.walk('./data'):
 
 
 df = pd.DataFrame({'path': paths})
-#df["classes"] = df['path'].apply(lambda x: x[24: x.find('/', 24)])  # adjust according to your path structure
-#unique_classes = df["classes"].unique().tolist()
-#maps = {class_name: idx for idx, class_name in enumerate(unique_classes)}
-#df.drop(columns=["classes"], inplace=True)
 
 def label_map_from_path(path):
     # use global maps
@@ -45,7 +41,7 @@ df = df.sample(frac=1, random_state=847).dropna().reset_index(drop=True)
 print(f'The model is training with {len(df)} data')
 print(f'Class distribution:\n{df["label"].value_counts()}')
 
-k_fold = KFold(n_splits=2, shuffle=True, random_state=42)
+k_fold = KFold(n_splits=5, shuffle=True, random_state=42)
 
 models = {}  #-> model[ state_dict, history{loss_train, acc_train, loss_val, acc_val}, scores{val_acc, val_recall, val_precision}, predictions{val_predictions, val_targets} ]
 fold = 1
@@ -53,7 +49,7 @@ fold = 1
 for train_index, val_index in k_fold.split(df):
     df_train = df.iloc[train_index]
     df_val = df.iloc[val_index]
-#    _, paths_aug, df_train = augment_data_prepared(data_dir=None, df_paths=df_train, augmentations_per_image=7)
+   # _, paths_aug, df_train = augment_data_prepared(data_dir=None, df_paths=df_train, augmentations_per_image=7)
 
     model, history, scores, predictions = train_swinad2net(
         train_df=df_train,
@@ -65,13 +61,10 @@ for train_index, val_index in k_fold.split(df):
                         growth_rate=32,
                         dilation_rates=[1, 2, 3]),
         num_classes=2,
-        image_size=224,
-        embed_dim=128,
-        growth_rate=32,
-        dilation_rates=[1, 2, 3],
-        batch_size=32,
-        num_epochs=700,
-        learning_rate=1e-3,
+        batch_size=8,
+        num_epochs=400,
+        patience=40,
+        learning_rate=1e-4,
         checkpoint_dir=f'./src/swinad2net/models/checkpoints/kfold_experiment_ASPP_like_128_embed/fold_{fold}',
         device=device,
         log_dir=f'./src/swinad2net/models/SwinAD2Net_ASPP_like/foldruns/fold_{fold}',
@@ -117,29 +110,22 @@ for train_index, val_index in k_fold.split(df):
     model, history, scores, predictions = train_swinad2net(
         train_df=df_train,
         val_df=df_val,
-        model=SwinAD2Net(num_classes=5,
-                        embed_dim=128,
-                        image_size=224,
-                        patch_size_embed=4,
-                        growth_rate=32,
-                        dilation_rates=[1, 2, 3]).to(device),
+        model=Densenet121(num_classes=5),
         num_classes=2,
         image_size=224,
-        embed_dim=128,
-        growth_rate=32,
-        dilation_rates=[1, 2, 3],
-        batch_size=32,
-        num_epochs=700,
-        learning_rate=1e-3,
-        checkpoint_dir=f'./src/swinad2net/models/checkpoints/kfold_experiment_standart_swin_128_embed/fold_{fold}',
+        patience=40,
+        batch_size=8,
+        num_epochs=400,
+        learning_rate=1e-4,
+        checkpoint_dir=f'./src/swinad2net/models/checkpoints/kfold_experiment_DenseNet121/fold_{fold}',
         device=device,
-        log_dir=f'./src/swinad2net/models/SwinAD2Net/foldruns/fold_{fold}',
+        log_dir=f'./src/swinad2net/models/DenseNet121/foldruns/fold_{fold}',
         state_dict=None
     )
     models[f'fold_{fold}'] = [model.state_dict(), history, scores, predictions]
 
-    os.makedirs('./src/swinad2net/models/checkpoints/kfold_experiment   _standart_swin_128_embed', exist_ok=True)
-    with open('./src/swinad2net/models/checkpoints/kfold_experiment_standart_swin_128_embed/kfold_results.pkl', 'wb') as f:
+    os.makedirs('./src/swinad2net/models/checkpoints/kfold_experiment_DenseNet121', exist_ok=True)
+    with open('./src/swinad2net/models/checkpoints/kfold_experiment_DenseNet121/kfold_results.pkl', 'wb') as f:
         pickle.dump(models, f)
 
     fold += 1
@@ -149,7 +135,7 @@ for train_index, val_index in k_fold.split(df):
 
 print(f"\n{'='*60}")
 print(f"K-Fold Training Complete!")
-print(f"Results were saved in: ./src/swinad2net/models/checkpoints/kfold_experiment_standart_swin_128_embed/kfold_results.pkl")
+print(f"Results were saved in: ./src/swinad2net/models/checkpoints/kfold_experiment_DenseNet121/kfold_results.pkl")
 print(f"Total folds: {len(models)}")
 print(f"{'='*60}\n")
 

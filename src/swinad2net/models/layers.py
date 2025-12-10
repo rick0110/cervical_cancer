@@ -358,7 +358,8 @@ class Adb_SE_Transition_ASPP_like(nn.Module):
                  growth_rate: int,
                  theta: float = 0.5,
                  p_transition: float = 0.0, 
-                 dilation_rates: Optional[list] = None):
+                 dilation_rates: Optional[list] = None,
+                 compression_rate: float = 0.25):
         """
         Initialize the Adb_SE_Transition_ASPP_like module.
         
@@ -368,6 +369,7 @@ class Adb_SE_Transition_ASPP_like(nn.Module):
         - theta (float): compression factor for the Transition Layer.
         - p_transition (float): dropout rate for the Transition Layer.
         - dilation_rates (Optional[list]): list of dilation rates for the Atrous Dense Block ASPP-like.
+        - compression_rate (float): compression rate for the bottleneck layers in the Atrous Dense Block ASPP-like.
         
         Params
         ------
@@ -382,7 +384,8 @@ class Adb_SE_Transition_ASPP_like(nn.Module):
         self.adb = AtrousDenseBlock_ASPP_like(
             in_channels=in_channels,
             growth_rate=growth_rate,
-            dilation_rates=dilation_rates
+            dilation_rates=dilation_rates,
+            compression_rate=compression_rate
         )
         
         adb_out_channels = self.adb.out_channels

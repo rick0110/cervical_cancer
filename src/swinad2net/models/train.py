@@ -91,14 +91,11 @@ def train_swinad2net(
     model: Optional[SwinAD2Net] = None,
     num_classes: int = 2,
     image_size: int = 224,
-    embed_dim: int = 128,
-    growth_rate: int = 32,
-    dilation_rates: list = [1, 2, 3],
-    patch_size_embed: int = 4,
     batch_size: int = 16,
     num_epochs: int = 50,
     learning_rate: float = 1e-3,
     weight_decay: float = 1e-4,
+    patience: int = 20,
     checkpoint_dir: str = "checkpoints",
     log_dir: str = "runs",
     device: str = "cuda",
@@ -125,14 +122,12 @@ def train_swinad2net(
         num_classes (int): Number of classification output classes.
         image_size (int): Input image size (height and width) used by the
             torchvision transforms.
-        embed_dim (int): Embedding dimension passed to `SwinAD2Net`.
-        growth_rate (int): Growth-rate hyperparameter passed to model.
-        dilation_rates (list): List of dilation rates used by the model.
-        patch_size_embed (int): Patch size for the model embedding layer.
         batch_size (int): Training batch size.
         num_epochs (int): Number of epochs to train.
         learning_rate (float): Initial learning rate for the optimizer.
         weight_decay (float): L2 weight decay for optimizer regularization.
+        patience (int): patience for early stopping. It indicates after how many epoches
+        without improvement in loss in validation the training will be stopped.
         checkpoint_dir (str): Directory where checkpoints and best model are
             saved. Created if it does not exist.
         log_dir (str): Directory where TensorBoard logs are written.
@@ -159,7 +154,7 @@ def train_swinad2net(
           `tensorboard --logdir {log_dir}` to visualize training progress.
     """
 
-    early_stopping = EarlyStopping(patience=20, verbose=True, path=os.path.join(checkpoint_dir, 'checkpoint_in_best_early_stop.pth'))
+    early_stopping = EarlyStopping(patience=patience, verbose=True, path=os.path.join(checkpoint_dir, 'checkpoint_in_best_early_stop.pth'))
     use_amp = device.startswith('cuda') and torch.cuda.is_available()
     scaler = GradScaler("cuda") if use_amp else None
     DTYPE = torch.bfloat16 # is only used in amp optimization with nvidia gpu
@@ -222,20 +217,20 @@ def train_swinad2net(
     
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.SGD(model.parameters(), lr=learning_rate, momentum=0.9, weight_decay=weight_decay)
-    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)
 
-    #for param_group in optimizer.param_groups:
-    #    if 'initial_lr' not in param_group:
-    #        param_group['initial_lr'] = param_group.get('lr', learning_rate)
+    #scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)
 
-    #warmup_epochs = 15
-    #def warmup_lr(epoch):
-    #    if epoch < warmup_epochs:
-    #        return (epoch + 1) / warmup_epochs
-    #    return 1.0
-    #
-    #warmup_scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=warmup_lr, last_epoch = epoch_stopped if epoch_stopped is not None else -1)
-    #cosine_annealing_scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs-warmup_epochs, last_epoch=epoch_stopped if epoch_stopped is not None else -1)
+    for param_group in optimizer.param_groups:
+        if 'initial_lr' not in param_group:
+            param_group['initial_lr'] = param_group.get('lr', learning_rate)
+    warmup_epochs = 15
+    def warmup_lr(epoch):
+        if epoch < warmup_epochs:
+            return (epoch + 1) / warmup_epochs
+        return 1.0
+    
+    warmup_scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=warmup_lr, last_epoch = epoch_stopped if epoch_stopped is not None else -1)
+    cosine_annealing_scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs-warmup_epochs, last_epoch=epoch_stopped if epoch_stopped is not None else -1)
 
     writer = SummaryWriter(log_dir=log_dir)
     best_val_acc = 0.0
@@ -315,11 +310,11 @@ def train_swinad2net(
                            'val_acc': val_acc}, os.path.join(checkpoint_dir, "best_model.pth"))
                 print(f"✓ better model saved! (Val Acc: {val_acc:.2f}%)")
         
-        scheduler.step()
-        #if epoch <= warmup_epochs:
-        #    warmup_scheduler.step()
-        #else:
-        #    cosine_annealing_scheduler.step()
+        #scheduler.step()
+        if epoch <= warmup_epochs:
+            warmup_scheduler.step()
+        else:
+            cosine_annealing_scheduler.step()
 
         writer.add_scalar('Learning_Rate', optimizer.param_groups[0]['lr'], epoch)
         

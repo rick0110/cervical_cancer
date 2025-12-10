@@ -197,7 +197,8 @@ class SwinAD2Net_ASPP_like(nn.Module):
                 image_size: int = 224,
                 patch_size_embed: int = 4,
                 growth_rate: int = 32,
-                dilation_rates: list = [1, 2, 3]):
+                dilation_rates: list = [1, 2, 3],
+                compression_rates: List[float, float, float] = [0.25, 0.25, 0.25]):
         """
         Initialize the SwinAD2Net_ASPP_like model.
 
@@ -216,7 +217,7 @@ class SwinAD2Net_ASPP_like(nn.Module):
             - self.adb_se_transX: Atrous Dense Block (ASPP-like) with SE and Transition for each stage.
             - self.global_pool: Global average pooling layer.
             - self.classifier: Fully connected layer for classification.
-
+            
         """
         super(SwinAD2Net_ASPP_like, self).__init__()
         
@@ -227,7 +228,7 @@ class SwinAD2Net_ASPP_like(nn.Module):
         self.swin_block1_1 = SwinTransformerBlock(in_channels=embed_dim, input_resolution=(image_size//patch_size_embed, image_size//patch_size_embed), number_of_heads=4, window_size=7, shift_size=0)
         self.swin_block1_2 = SwinTransformerBlock(in_channels=embed_dim, input_resolution=(image_size//patch_size_embed, image_size//patch_size_embed), number_of_heads=4, window_size=7, shift_size=3)
         # ADB -> SE -> Transition 1
-        self.adb_se_trans1 = Adb_SE_Transition_ASPP_like(in_channels=embed_dim, growth_rate=growth_rate, theta=0.5, dilation_rates=dilation_rates)
+        self.adb_se_trans1 = Adb_SE_Transition_ASPP_like(in_channels=embed_dim, growth_rate=growth_rate, theta=0.5, dilation_rates=dilation_rates, compression_rate=compression_rates[0])
 
         # Stage 2: 2x Swin Blocks (28x28)
         ch2 = self.adb_se_trans1.out_channels
@@ -235,7 +236,7 @@ class SwinAD2Net_ASPP_like(nn.Module):
         self.swin_block2_2 = SwinTransformerBlock(in_channels=ch2, input_resolution=(image_size//(patch_size_embed*2), image_size//(patch_size_embed*2)), number_of_heads=4, window_size=7, shift_size=3)
 
         # ADB -> SE -> Transition 2
-        self.adb_se_trans2 = Adb_SE_Transition_ASPP_like(in_channels=ch2, growth_rate=growth_rate, theta=0.5, dilation_rates=dilation_rates)
+        self.adb_se_trans2 = Adb_SE_Transition_ASPP_like(in_channels=ch2, growth_rate=growth_rate, theta=0.5, dilation_rates=dilation_rates, compression_rate=compression_rates[1])
 
         # Stage 3: 6x Swin Blocks (14x14)
         ch3 = self.adb_se_trans2.out_channels
@@ -247,7 +248,7 @@ class SwinAD2Net_ASPP_like(nn.Module):
         self.swin_block3_6 = SwinTransformerBlock(in_channels=ch3, input_resolution=(image_size//(patch_size_embed*4), image_size//(patch_size_embed*4)), number_of_heads=2, window_size=7, shift_size=3)
         
         # ADB -> SE -> Transition 3
-        self.adb_se_trans3 = Adb_SE_Transition_ASPP_like(in_channels=ch3, growth_rate=growth_rate, theta=0.5, dilation_rates=dilation_rates)
+        self.adb_se_trans3 = Adb_SE_Transition_ASPP_like(in_channels=ch3, growth_rate=growth_rate, theta=0.5, dilation_rates=dilation_rates, compression_rate=compression_rates[2])
         
         # Stage 4: 2x Swin Blocks (7x7)
         ch4 = self.adb_se_trans3.out_channels
