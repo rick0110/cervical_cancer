@@ -53,12 +53,17 @@ fold = 1
 for train_index, val_index in k_fold.split(df):
     df_train = df.iloc[train_index]
     df_val = df.iloc[val_index]
-    _, paths_aug, df_train = augment_data_prepared(data_dir=None, df_paths=df_train, augmentations_per_image=7)
+#    _, paths_aug, df_train = augment_data_prepared(data_dir=None, df_paths=df_train, augmentations_per_image=7)
 
     model, history, scores, predictions = train_swinad2net(
         train_df=df_train,
         val_df=df_val,
-        model=Densenet121(num_classes=5),
+        model=SwinAD2Net_ASPP_like(num_classes=5,
+                        embed_dim=128,
+                        image_size=224,
+                        patch_size_embed=4,
+                        growth_rate=32,
+                        dilation_rates=[1, 2, 3]),
         num_classes=2,
         image_size=224,
         embed_dim=128,

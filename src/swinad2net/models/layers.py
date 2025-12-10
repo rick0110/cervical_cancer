@@ -265,18 +265,17 @@ class AtrousDenseBlock_ASPP_like(nn.Module):
         inter_channels = max(1, int(in_channels * compression_rate))
 
         for d in dilation_rates:
-            if self.use_bottleneck:
-                # 1x1 bottleneck -> 3x3 atrous -> BN + ReLU
-                self.branches.append(nn.Sequential(
-                    nn.BatchNorm2d(in_channels),
-                    nn.ReLU(inplace=True),
-                    nn.Conv2d(in_channels, inter_channels, kernel_size=1, bias=False),
-                    nn.BatchNorm2d(inter_channels),
-                    nn.ReLU(inplace=True),
-                    nn.Conv2d(inter_channels, growth_rate, kernel_size=3, padding=d, dilation=d, bias=False),
-                    nn.BatchNorm2d(growth_rate),
-                    nn.ReLU(inplace=True)
-                ))
+            # 1x1 bottleneck -> 3x3 atrous -> BN + ReLU
+            self.branches.append(nn.Sequential(
+                nn.BatchNorm2d(in_channels),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(in_channels, inter_channels, kernel_size=1, bias=False),
+                nn.BatchNorm2d(inter_channels),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(inter_channels, growth_rate, kernel_size=3, padding=d, dilation=d, bias=False),
+                nn.BatchNorm2d(growth_rate),
+                nn.ReLU(inplace=True)
+            ))
         self.out_channels = in_channels + len(dilation_rates) * growth_rate
 
         self.final_layer = nn.Sequential(
