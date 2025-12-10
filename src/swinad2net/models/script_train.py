@@ -6,15 +6,15 @@ import torch
 from sklearn.model_selection import KFold
 import pickle
 from .dataset import augment_data_prepared
-from .model import SwinAD2Net, SwinAD2Net_ASPP_like
+from .model import SwinAD2Net, SwinAD2Net_ASPP_like, Densenet121
 
-#maps = {
-#    'koilocytotic': 0,
-#    'dyskeratotic': 1,
-#    'metaplastic': 2,
-#    'superficial': 3,
-#    'parabasal': 4
-#}
+maps = {
+    'koilocytotic': 0,
+    'dyskeratotic': 1,
+    'metaplastic': 2,
+    'superficial': 3,
+    'parabasal': 4
+}
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f'Using device: {device}')
@@ -22,15 +22,15 @@ print(f'Using device: {device}')
 paths = []
 for root, dirs, files in os.walk('./data'):
     for file in files:
-        #if file.lower().endswith('.bmp'):
-        paths.append(os.path.join(root, file))
+        if file.lower().endswith('.bmp'):
+            paths.append(os.path.join(root, file))
 
 
 df = pd.DataFrame({'path': paths})
-df["classes"] = df['path'].apply(lambda x: x[24: x.find('/', 24)])  # adjust according to your path structure
-unique_classes = df["classes"].unique().tolist()
-maps = {class_name: idx for idx, class_name in enumerate(unique_classes)}
-df.drop(columns=["classes"], inplace=True)
+#df["classes"] = df['path'].apply(lambda x: x[24: x.find('/', 24)])  # adjust according to your path structure
+#unique_classes = df["classes"].unique().tolist()
+#maps = {class_name: idx for idx, class_name in enumerate(unique_classes)}
+#df.drop(columns=["classes"], inplace=True)
 
 def label_map_from_path(path):
     # use global maps
@@ -58,12 +58,7 @@ for train_index, val_index in k_fold.split(df):
     model, history, scores, predictions = train_swinad2net(
         train_df=df_train,
         val_df=df_val,
-        model=SwinAD2Net_ASPP_like(num_classes=5,
-                        embed_dim=128,
-                        image_size=224,
-                        patch_size_embed=4,
-                        growth_rate=32,
-                        dilation_rates=[1, 2, 3]).to(device),
+        model=Densenet121(num_classes=5),
         num_classes=2,
         image_size=224,
         embed_dim=128,
