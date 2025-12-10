@@ -7,6 +7,7 @@ from sklearn.model_selection import KFold
 import pickle
 from .dataset import augment_data_prepared
 from .model import SwinAD2Net, SwinAD2Net_ASPP_like, Densenet121
+from typing import Optional, Tuple,List,Dict
 
 maps = {
     'koilocytotic': 0,

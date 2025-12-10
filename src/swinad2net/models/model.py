@@ -16,7 +16,7 @@ class SwinAD2Net(nn.Module):
                 image_size: int = 224,
                 patch_size_embed: int = 4,
                 growth_rate: int = 32,
-                dilation_rates: list = [1, 2, 3]):
+                dilation_rates: Optional[List[int]] = [1, 2, 3]):
         """Initialize the SwinAD2Net model.
         
         Args:
@@ -202,8 +202,8 @@ class SwinAD2Net_ASPP_like(nn.Module):
                 image_size: int = 224,
                 patch_size_embed: int = 4,
                 growth_rate: int = 32,
-                dilation_rates: list = [1, 2, 3],
-                compression_rates: List[float, float, float] = [0.25, 0.25, 0.25]):
+                dilation_rates: Optional[List[int]] = [1, 2, 3],
+                compression_rates: Optional[List[float]] = [0.25, 0.25, 0.25]):
         """
         Initialize the SwinAD2Net_ASPP_like model.
 
