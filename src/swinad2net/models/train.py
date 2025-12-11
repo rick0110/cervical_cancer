@@ -99,7 +99,8 @@ def train_swinad2net(
     log_dir: str = "runs",
     device: str = "cuda",
     state_dict=None,
-    epoch_stopped: int = None
+    epoch_stopped: int = None,
+    optimizer: str = "AdamW"
 
 ):
     """Train a SwinAD2Net image classification model.
@@ -133,6 +134,9 @@ def train_swinad2net(
         device (str): PyTorch device string, e.g. `'cuda'` or `'cpu'`.
         state_dict (optional): Optional state dictionary used to initialize the
             model parameters before training (useful for fine-tuning).
+        epoch_stopped (int, optional): If resuming training from a checkpoint,
+            the epoch number to start from. Defaults to None.
+        optimizer (str): Optimizer to use for training. Defaults to "AdamW".
 
     Returns:
         tuple: A 4-tuple `(model, history, scores, predictions_dict)` where:
@@ -217,21 +221,22 @@ def train_swinad2net(
     print(f"Parameters: {sum(p.numel() for p in model.parameters()):,}\n")
     
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.SGD(model.parameters(), lr=learning_rate)
+    if optimizer == "AdamW":
+        optimizer = optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+        for param_group in optimizer.param_groups:
+            if 'initial_lr' not in param_group:
+                param_group['initial_lr'] = param_group.get('lr', learning_rate)
+        warmup_epochs = 15
+        def warmup_lr(epoch):
+            if epoch < warmup_epochs:
+                return (epoch + 1) / warmup_epochs
+            return 1.0
 
-    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)
-
-    #for param_group in optimizer.param_groups:
-    #    if 'initial_lr' not in param_group:
-    #        param_group['initial_lr'] = param_group.get('lr', learning_rate)
-    #warmup_epochs = 15
-    #def warmup_lr(epoch):
-    #    if epoch < warmup_epochs:
-    #        return (epoch + 1) / warmup_epochs
-    #    return 1.0
-#
-    #warmup_scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=warmup_lr, last_epoch = epoch_stopped if epoch_stopped is not None else -1)
-    #cosine_annealing_scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs-warmup_epochs, last_epoch=epoch_stopped if epoch_stopped is not None else -1)
+        warmup_scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=warmup_lr, last_epoch = epoch_stopped if epoch_stopped is not None else -1)
+        cosine_annealing_scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs-warmup_epochs, last_epoch=epoch_stopped if epoch_stopped is not None else -1) 
+    elif optimizer == "SGD":
+        optimizer = optim.SGD(model.parameters(), lr=learning_rate)
+        scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)
 
     writer = SummaryWriter(log_dir=log_dir)
     best_val_acc = 0.0
@@ -311,13 +316,16 @@ def train_swinad2net(
                            'val_acc': val_acc}, os.path.join(checkpoint_dir, "best_model.pth"))
                 print(f"✓ better model saved! (Val Acc: {val_acc:.2f}%)")
         
-        scheduler.step()
-        #if epoch <= warmup_epochs:
-        #    warmup_scheduler.step()
-        #else:
-        #    cosine_annealing_scheduler.step()
-        #writer.add_scalar('Learning_Rate', optimizer.param_groups[0]['lr'], epoch)
-        #
+        if optimizer == "SGD":
+            scheduler.step()
+            
+        elif optimizer == "AdamW":
+            if epoch <= warmup_epochs:
+                warmup_scheduler.step()
+            else:
+                cosine_annealing_scheduler.step()
+            writer.add_scalar('Learning_Rate', optimizer.param_groups[0]['lr'], epoch)
+
         if epoch % 10 == 0:
             torch.save({'epoch': epoch, 'model_state_dict': model.state_dict()},
                       os.path.join(checkpoint_dir, f"checkpoint_epoch_{epoch}.pth"))
