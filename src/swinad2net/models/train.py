@@ -217,7 +217,7 @@ def train_swinad2net(
     print(f"Parameters: {sum(p.numel() for p in model.parameters()):,}\n")
     
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.SGD(model.parameters(), lr=learning_rate, momentum=0.9, weight_decay=weight_decay)
+    optimizer = optim.SGD(model.parameters(), lr=learning_rate)
 
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)
 
