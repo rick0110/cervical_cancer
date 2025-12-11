@@ -136,7 +136,8 @@ def train_swinad2net(
             model parameters before training (useful for fine-tuning).
         epoch_stopped (int, optional): If resuming training from a checkpoint,
             the epoch number to start from. Defaults to None.
-        optimizer (str): Optimizer to use for training. Defaults to "AdamW".
+        optimizer (str): Optimizer to use for training. Defaults to "AdamW". The available options for now are "AdamW" and "SGD".
+
 
     Returns:
         tuple: A 4-tuple `(model, history, scores, predictions_dict)` where:

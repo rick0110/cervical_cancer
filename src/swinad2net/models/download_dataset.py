@@ -99,13 +99,6 @@ if __name__ == "__main__":
         save_directory = os.path.join('./data', class_name)
         download_dataset(url, save_directory)
 
-    #os.makedirs("./imagenet", exist_ok=True)
-    #download_dataset(
-    #    url="https://image-net.org/data/ILSVRC/blurred/train_blurred.tar.gz",
-    #    save_dir="./imagenet",
-    #    compact_format="tar"
-    #)
-
 
 
 

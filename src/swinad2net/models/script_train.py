@@ -7,7 +7,7 @@ from sklearn.model_selection import KFold
 import pickle
 from .dataset import augment_data_prepared
 from .model import SwinAD2Net, SwinAD2Net_ASPP_like, Densenet121
-from typing import Optional, Tuple,List,Dict
+from typing import Optional, Tuple, List, Dict
 
 maps = {
     'koilocytotic': 0,
@@ -56,12 +56,12 @@ for train_index, val_index in k_fold.split(df):
         train_df=df_train,
         val_df=df_val,
         model=SwinAD2Net_ASPP_like(num_classes=5,
-                        embed_dim=64,
+                        embed_dim=128,
                         image_size=224,
                         patch_size_embed=4,
                         growth_rate=16,
                         dilation_rates=[1, 2, 3],
-                        compression_rates=[0.25, 0.25, 0.25]),
+                        compression_rates=[0.1, 0.1, 0.1]),
         batch_size=8,
         num_epochs=400,
         patience=40,
@@ -70,7 +70,8 @@ for train_index, val_index in k_fold.split(df):
         device=device,
         log_dir=f'./src/swinad2net/models/SwinAD2Net_ASPP_like/foldruns/fold_{fold}',
         state_dict=None,
-        epoch_stopped=None
+        epoch_stopped=None,
+        optimizer="AdamW"
     )
     models[f'fold_{fold}'] = [model.state_dict(), history, scores, predictions]
 
@@ -120,7 +121,9 @@ for train_index, val_index in k_fold.split(df):
         checkpoint_dir=f'./src/swinad2net/models/checkpoints/kfold_experiment_DenseNet121/fold_{fold}',
         device=device,
         log_dir=f'./src/swinad2net/models/DenseNet121/foldruns/fold_{fold}',
-        state_dict=None
+        state_dict=None,
+        epoch_stopped=None,
+        optimizer="AdamW"
     )
     models[f'fold_{fold}'] = [model.state_dict(), history, scores, predictions]
 
