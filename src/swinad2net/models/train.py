@@ -187,15 +187,21 @@ def train_swinad2net(
     import torchvision.transforms as T
     
     transform_train = T.Compose([
-        T.Resize([image_size, image_size]), 
-        T.ToTensor(),
-        T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    T.Resize([image_size + 32, image_size + 32]),
+    T.RandomResizedCrop(image_size, scale=(0.7, 1.0), ratio=(0.9, 1.1)),
+    T.RandomHorizontalFlip(p=0.5),
+    T.RandomVerticalFlip(p=0.2),
+    T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.1, hue=0.05),
+    T.RandomRotation(degrees=10),
+    T.ToTensor(),
+    T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ])
     
     transform_val = T.Compose([
-        T.Resize([image_size, image_size]),  
+        T.Resize([image_size, image_size]),
+        T.CenterCrop(image_size),
         T.ToTensor(),
-        T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ])
     
     train_dataset = SimpleImageFolder(df=train_df, transform=transform_train)
