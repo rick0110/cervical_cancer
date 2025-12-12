@@ -113,7 +113,8 @@ class SimpleImageFolder(Dataset):
                  df: pd.DataFrame,
                  transform: Optional[T.Compose] = None,
                  path_col: str = 'path',
-                 label_col: str = 'label'):
+                 label_col: str = 'label',
+                 augment: bool = True):
         """Initializes the dataset from a DataFrame.
         
         Args:
@@ -142,6 +143,8 @@ class SimpleImageFolder(Dataset):
 
         self.num_classes = self.data['label'].nunique()
 
+        self.augment = augment
+
     def __len__(self):
         """Returns the total number of samples in the dataset.
         
@@ -168,6 +171,9 @@ class SimpleImageFolder(Dataset):
         
         if self.transform:
             img = self.transform(img)
+        
+        if self.augment:
+            apply_random_augmentation(img)
         
         return img, label
 

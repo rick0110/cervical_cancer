@@ -50,7 +50,6 @@ fold = 1
 for train_index, val_index in k_fold.split(df):
     df_train = df.iloc[train_index]
     df_val = df.iloc[val_index]
-    _, paths_aug, df_train = augment_data_prepared(data_dir=None, df_paths=df_train, augmentations_per_image=7)
 
     model, history, scores, predictions = train_swinad2net(
         train_df=df_train,
@@ -81,8 +80,6 @@ for train_index, val_index in k_fold.split(df):
 
     fold += 1
 
-    for path in paths_aug:
-        os.remove(path)
 
 print(f"\n{'='*60}")
 print(f"K-Fold Training Complete!")
@@ -107,7 +104,6 @@ fold = 1
 for train_index, val_index in k_fold.split(df):
     df_train = df.iloc[train_index]
     df_val = df.iloc[val_index]
-    _, paths_aug, df_train = augment_data_prepared(data_dir=None, df_paths=df_train, augmentations_per_image=7)
 
     model, history, scores, predictions = train_swinad2net(
         train_df=df_train,
@@ -132,9 +128,6 @@ for train_index, val_index in k_fold.split(df):
         pickle.dump(models, f)
 
     fold += 1
-
-    for path in paths_aug:
-        os.remove(path)
 
 print(f"\n{'='*60}")
 print(f"K-Fold Training Complete!")
