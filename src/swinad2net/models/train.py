@@ -262,7 +262,7 @@ def train_swinad2net(
                     if isinstance(l2_regularization, float) and l2_regularization > 0.0:
                         l2_reg = torch.tensor(0., device=device)
                         for param in model.parameters():
-                            l2_reg += torch.norm(param)
+                            l2_reg += param.pow(2).sum()
                         regularization_ = l2_regularization * l2_reg
                     elif isinstance(l2_regularization, dict):
                         regularization_ = torch.tensor(0., device=device)
