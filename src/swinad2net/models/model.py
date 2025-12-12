@@ -296,19 +296,19 @@ class SwinAD2Net_ASPP_like(nn.Module):
         x = self.adb_se_trans2(x)  # [B, ch3, 14, 14]
         
         # Stage 3: 6x Swin Blocks
-        if self.training and random.random() > self.drop_path:
+        if self.training and random.random() < self.drop_path:
             pass
         else:
             x = self.swin_block3_1(x)  # [B, ch3, 14, 14]
             x = self.swin_block3_2(x)  # [B, ch3, 14, 14]
 
-        if self.training and random.random() > self.drop_path:
+        if self.training and random.random() < self.drop_path:
             pass
         else:
             x = self.swin_block3_3(x)  # [B, ch3, 14, 14]
             x = self.swin_block3_4(x)  # [B, ch3, 14, 14]
         
-        if self.training and random.random() > self.drop_path:
+        if self.training and random.random() < self.drop_path:
             pass
         else:
             x = self.swin_block3_5(x)  # [B, ch3, 14, 14]
