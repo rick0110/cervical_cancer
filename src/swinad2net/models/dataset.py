@@ -170,7 +170,7 @@ class SimpleImageFolder(Dataset):
         img = Image.open(img_path).convert('RGB')
 
         if self.augment:
-            apply_random_augmentation(img)
+            img = apply_random_augmentation(img)
         
         if self.transform:
             img = self.transform(img)
