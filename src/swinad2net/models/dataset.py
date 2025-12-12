@@ -168,12 +168,13 @@ class SimpleImageFolder(Dataset):
         label = row['label']
         
         img = Image.open(img_path).convert('RGB')
+
+        if self.augment:
+            apply_random_augmentation(img)
         
         if self.transform:
             img = self.transform(img)
         
-        if self.augment:
-            apply_random_augmentation(img)
         
         return img, label
 
