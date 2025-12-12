@@ -334,8 +334,8 @@ def apply_random_augmentation(img: Image.Image) -> Image.Image:
         Image.Image: New PIL Image with random transformations applied.
     """
     from PIL import ImageEnhance
-    angle = random.uniform(-30, 30)
-    img = img.rotate(angle, fillcolor=(0, 0, 0))
+    angle = random.uniform(-15, 15)
+    img = img.rotate(angle, fillcolor=None)
     
     if random.random() > 0.5:
         img = img.transpose(Image.FLIP_LEFT_RIGHT)
@@ -355,7 +355,7 @@ def apply_random_augmentation(img: Image.Image) -> Image.Image:
     
     if random.random() > 0.5:
         w, h = img.size
-        zoom_factor = random.uniform(0.9, 1.1)
+        zoom_factor = random.uniform(0.95, 1.05)
         new_w, new_h = int(w * zoom_factor), int(h * zoom_factor)
         img = img.resize((new_w, new_h), Image.BILINEAR)
         
@@ -370,7 +370,7 @@ def apply_random_augmentation(img: Image.Image) -> Image.Image:
             delta_w = w - new_w
             delta_h = h - new_h
             padding = (delta_w // 2, delta_h // 2, delta_w - (delta_w // 2), delta_h - (delta_h // 2))
-            img = ImageOps.expand(img, padding, fill=(0, 0, 0))
+            img = ImageOps.expand(img, padding, fill=None)
     
     return img
 

@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from .layers import *
 from typing import Optional, List, Tuple, Dict
+import random
 
 class SwinAD2Net(nn.Module):
     """
@@ -204,7 +205,8 @@ class SwinAD2Net_ASPP_like(nn.Module):
                 growth_rate: int = 32,
                 dilation_rates: Optional[List[int]] = [1, 2, 3],
                 compression_rates: Optional[List[float]] = [0.25, 0.25, 0.25],
-                dropout: float = 0.5
+                dropout: float = 0.5,
+                drop_path: float = 0.1
                 ):
         """
         Initialize the SwinAD2Net_ASPP_like model.
@@ -231,6 +233,7 @@ class SwinAD2Net_ASPP_like(nn.Module):
         super(SwinAD2Net_ASPP_like, self).__init__()
 
         self.num_classes = num_classes
+        self.drop_path = drop_path
         
         # Patch Embedding
         self.patch_emb = PatchEmb(patch_size=patch_size_embed, in_channels=3, embed_dim=embed_dim)
@@ -293,12 +296,23 @@ class SwinAD2Net_ASPP_like(nn.Module):
         x = self.adb_se_trans2(x)  # [B, ch3, 14, 14]
         
         # Stage 3: 6x Swin Blocks
-        x = self.swin_block3_1(x)  # [B, ch3, 14, 14]
-        x = self.swin_block3_2(x)  # [B, ch3, 14, 14]
-        x = self.swin_block3_3(x)  # [B, ch3, 14, 14]
-        x = self.swin_block3_4(x)  # [B, ch3, 14, 14]
-        x = self.swin_block3_5(x)  # [B, ch3, 14, 14]
-        x = self.swin_block3_6(x)  # [B, ch3, 14, 14]
+        if self.training and random.random() > self.drop_path:
+            pass
+        else:
+            x = self.swin_block3_1(x)  # [B, ch3, 14, 14]
+            x = self.swin_block3_2(x)  # [B, ch3, 14, 14]
+
+        if self.training and random.random() > self.drop_path:
+            pass
+        else:
+            x = self.swin_block3_3(x)  # [B, ch3, 14, 14]
+            x = self.swin_block3_4(x)  # [B, ch3, 14, 14]
+        
+        if self.training and random.random() > self.drop_path:
+            pass
+        else:
+            x = self.swin_block3_5(x)  # [B, ch3, 14, 14]
+            x = self.swin_block3_6(x)  # [B, ch3, 14, 14]
         
         # ADB -> SE -> Transition 3
         x = self.adb_se_trans3(x)  # [B, ch4, 7, 7]
