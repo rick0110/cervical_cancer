@@ -100,9 +100,7 @@ def train_swinad2net(
     device: str = "cuda",
     state_dict=None,
     epoch_stopped: int = None,
-    optimizer: str = "AdamW",
-    l2_regularization: float = 0.0
-
+    optimizer: str = "AdamW"
 ):
     """Train a SwinAD2Net image classification model.
 
@@ -259,19 +257,7 @@ def train_swinad2net(
             if use_amp:
                 with autocast(device_type=device, dtype=DTYPE):
                     outputs = model(inputs)
-                    if isinstance(l2_regularization, float) and l2_regularization > 0.0:
-                        l2_reg = torch.tensor(0., device=device)
-                        for param in model.parameters():
-                            l2_reg += param.pow(2).sum()
-                        regularization_ = l2_regularization * l2_reg
-                    elif isinstance(l2_regularization, dict):
-                        regularization_ = torch.tensor(0., device=device)
-                        for name, param in model.named_parameters():
-                            for reg_name in l2_regularization:
-                                if reg_name in name and l2_regularization[reg_name] > 0.0:
-                                    regularization_ += l2_regularization[reg_name] * param.pow(2).sum()
-                    
-                    loss = criterion(outputs, labels) + regularization_
+                    loss = criterion(outputs, labels)
 
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
