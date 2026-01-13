@@ -9,6 +9,8 @@ from .dataset import augment_data_prepared
 from .model import SwinAD2Net, SwinAD2Net_ASPP_like, Densenet121
 from typing import Optional, Tuple, List, Dict
 
+BREAK_ONE = True
+
 maps = {
     'koilocytotic': 0,
     'dyskeratotic': 1,
@@ -83,6 +85,9 @@ for train_index, val_index in k_fold.split(df):
         pickle.dump(models, f)
 
     fold += 1
+    if BREAK_ONE:
+        break
+    
 
 
 print(f"\n{'='*60}")
@@ -132,6 +137,8 @@ for train_index, val_index in k_fold.split(df):
         pickle.dump(models, f)
 
     fold += 1
+    if BREAK_ONE:
+        break
 
 print(f"\n{'='*60}")
 print(f"K-Fold Training Complete!")
