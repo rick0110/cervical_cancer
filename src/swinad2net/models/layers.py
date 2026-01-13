@@ -19,11 +19,14 @@ import torch.utils.checkpoint as checkpoint
 import timm
 from typing import Tuple, Optional, List, Union, Any
 from timm.models.layers import SqueezeExcite as SEBlock
+from torch.nn.utils import parametrize
 
 __all__: List[str] = ["SwinTransformerStage",
                       "SwinTransformerBlock",
                       "DeformableSwinTransformerBlock",
                       "TransitionLayer",
+                      "DenseLayer",
+                      "DenseBlock",
                       "PatchEmb",
                       "Adb_SE_Transition",
                       "Adb_SE_Transition_ASPP_like",]
@@ -76,7 +79,7 @@ class TransitionLayer(nn.Module):
     the number of output feature maps using a compression factor
     theta.
     """
-    def __init__(self, in_channels: int, theta: float, p: float = 0.0):
+    def __init__(self, in_channels: int, theta: float, p: float = 0.2):
         """
         Initialize the different parts of the TransitionBlock.
 
@@ -111,6 +114,74 @@ class TransitionLayer(nn.Module):
         if self.p > 0:
             out = F.dropout(out, p=self.p, training=self.training)
         return out
+
+
+class DenseLayer(nn.Module):
+    """
+    Single bottleneck layer used inside a DenseBlock (BN-ReLU-1x1 Conv followed by BN-ReLU-3x3 Conv).
+    The implementation mirrors the layout described in DenseNet, optionally applying dropout after the
+    last convolution.
+    """
+
+    def __init__(self,
+                 in_channels: int,
+                 growth_rate: int,
+                 bn_size: int = 4,
+                 drop_rate: float = 0.0) -> None:
+        super().__init__()
+        inter_channels = bn_size * growth_rate
+        self.norm1 = nn.BatchNorm2d(in_channels)
+        self.relu1 = nn.ReLU(inplace=True)
+        self.conv1 = nn.Conv2d(in_channels, inter_channels, kernel_size=1, stride=1, bias=False)
+
+        self.norm2 = nn.BatchNorm2d(inter_channels)
+        self.relu2 = nn.ReLU(inplace=True)
+        self.conv2 = nn.Conv2d(inter_channels, growth_rate, kernel_size=3, stride=1, padding=1, bias=False)
+
+        self.drop_rate = drop_rate
+
+    def forward(self, features: Union[torch.Tensor, List[torch.Tensor]]) -> torch.Tensor:
+        # Accept either a single tensor or a list of previous features for easier reuse.
+        if isinstance(features, torch.Tensor):
+            concatenated = features
+        else:
+            concatenated = torch.cat(features, dim=1)
+
+        new_features = self.conv1(self.relu1(self.norm1(concatenated)))
+        new_features = self.conv2(self.relu2(self.norm2(new_features)))
+
+        if self.drop_rate > 0.0:
+            new_features = F.dropout(new_features, p=self.drop_rate, training=self.training)
+        return new_features
+
+
+class DenseBlock(nn.Module):
+    """
+    Stacks multiple DenseLayer modules, concatenating their outputs channel-wise as in DenseNet.
+    """
+
+    def __init__(self,
+                 num_layers: int,
+                 in_channels: int,
+                 growth_rate: int,
+                 bn_size: int = 4,
+                 drop_rate: float = 0.0) -> None:
+        super().__init__()
+        layers: List[DenseLayer] = []
+        channels = in_channels
+        for _ in range(num_layers):
+            layer = DenseLayer(channels, growth_rate, bn_size=bn_size, drop_rate=drop_rate)
+            layers.append(layer)
+            channels += growth_rate
+        self.layers = nn.ModuleList(layers)
+        self.out_channels = channels
+
+    def forward(self, init_features: torch.Tensor) -> torch.Tensor:
+        features: List[torch.Tensor] = [init_features]
+        for layer in self.layers:
+            new_feature = layer(features)
+            features.append(new_feature)
+        return torch.cat(features, dim=1)
     
 class AtrousDenseBlock(nn.Module):
     """
@@ -169,7 +240,10 @@ class AtrousDenseBlock_ASPP_like(nn.Module):
     between their channels, this block executes each convolution in parallel and concatenates the results.  
     Replaces the sequential DenseNet-like structure to allow parallel execution.
     """
-    def __init__(self, in_channels: int, growth_rate: int, dilation_rates: list = [1, 2, 3]):
+    def __init__(self, in_channels: int,
+                 growth_rate: int,
+                 dilation_rates: list = [1, 2, 3],
+                 compression_rate: float = 0.25):
         """
         Initialize the parameters of the Atrous Dense Block ASPP-like.
 
@@ -183,12 +257,22 @@ class AtrousDenseBlock_ASPP_like(nn.Module):
         - branches (nn.ModuleList): list of parallel convolutional branches.
         - out_channels (int): number of output channels after concatenation.
         - final_layer (nn.Sequential): final convolutional layer to process concatenated output. 
+        compression_rate (float): compression rate for the bottleneck layers in each branch.
         """
+    
         super().__init__()
         self.branches = nn.ModuleList()
+        inter_channels = max(1, int(in_channels * compression_rate))
+
         for d in dilation_rates:
+            # 1x1 bottleneck -> 3x3 atrous -> BN + ReLU
             self.branches.append(nn.Sequential(
-                nn.Conv2d(in_channels, growth_rate, kernel_size=3, padding=d, dilation=d, bias=False),
+                nn.BatchNorm2d(in_channels),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(in_channels, inter_channels, kernel_size=1, bias=False),
+                nn.BatchNorm2d(inter_channels),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(inter_channels, growth_rate, kernel_size=3, padding=d, dilation=d, bias=False),
                 nn.BatchNorm2d(growth_rate),
                 nn.ReLU(inplace=True)
             ))
@@ -274,7 +358,8 @@ class Adb_SE_Transition_ASPP_like(nn.Module):
                  growth_rate: int,
                  theta: float = 0.5,
                  p_transition: float = 0.0, 
-                 dilation_rates: Optional[list] = None):
+                 dilation_rates: Optional[list] = None,
+                 compression_rate: float = 0.25):
         """
         Initialize the Adb_SE_Transition_ASPP_like module.
         
@@ -284,6 +369,7 @@ class Adb_SE_Transition_ASPP_like(nn.Module):
         - theta (float): compression factor for the Transition Layer.
         - p_transition (float): dropout rate for the Transition Layer.
         - dilation_rates (Optional[list]): list of dilation rates for the Atrous Dense Block ASPP-like.
+        - compression_rate (float): compression rate for the bottleneck layers in the Atrous Dense Block ASPP-like.
         
         Params
         ------
@@ -298,7 +384,8 @@ class Adb_SE_Transition_ASPP_like(nn.Module):
         self.adb = AtrousDenseBlock_ASPP_like(
             in_channels=in_channels,
             growth_rate=growth_rate,
-            dilation_rates=dilation_rates
+            dilation_rates=dilation_rates,
+            compression_rate=compression_rate
         )
         
         adb_out_channels = self.adb.out_channels
@@ -321,6 +408,55 @@ class Adb_SE_Transition_ASPP_like(nn.Module):
         
         return x_out
 
+class LowRankMatrix(nn.Module):
+    """
+    Low-rank matrix parametrization for linear layers.
+    """
+    def __init__(self, in_features, out_features, rank):
+        """
+        Constructor method
+        :param in_features: (int) Number of input features
+        :param out_features: (int) Number of output features
+        :param rank: (int) Rank of the low-rank approximation
+        """
+        super().__init__()
+        self.P = nn.Parameter(
+            torch.randn(out_features, rank)
+        )
+        self.Q = nn.Parameter(
+            torch.randn(rank, in_features)
+        )
+
+    def forward(self, x):
+        return self.P @ self.Q
+
+def create_low_rank_linear(in_features: int, out_features: int, rank: int, bias: bool = True) -> nn.Linear:
+    """
+    Build a linear layer with low-rank weight parametrization.
+    We approximate the weight matrix W of the linear layer as W = P @ Q,
+    with P: (out_features, rank), Q: (rank, in_features). 
+    Remainder: in pytorch, the weight matrix of nn.Linear is of shape (out_features, in_features), 
+    and the forward pass is y = x @ W^T + b. So W^T = Q^T @ P^T. But it does not matter for our approach.
+
+    params:
+        - in_features: (int) Number of input features
+        - out_features: (int) Number of output features
+        - rank: (int) Rank of the low-rank approximation
+        - bias: (bool) If true, bias is added to the linear layer
+
+    returns:
+        - layer: (nn.Linear) Linear layer with low-rank weight parametrization
+    """
+    layer = nn.Linear(in_features, out_features, bias=bias)
+    
+    parametrize.register_parametrization(
+        layer,                          # The module
+        'weight',                       # The parameter to be modified
+        LowRankMatrix(in_features, out_features, rank) # The module that defines W = P@Q
+    )
+    
+    return layer
+
 class FeedForward(nn.Sequential):
     """
     Feed forward module used in the transformer encoder.
@@ -330,7 +466,8 @@ class FeedForward(nn.Sequential):
                  in_features: int,
                  hidden_features: int,
                  out_features: int,
-                 dropout: float = 0.) -> None:
+                 dropout: float = 0.1,
+                 rank_reduction: float = 0.25) -> None:
         """
         Constructor method
         :param in_features: (int) Number of input features
@@ -340,10 +477,16 @@ class FeedForward(nn.Sequential):
         """
         # Call super constructor and init modules
         super().__init__(
-            nn.Linear(in_features=in_features, out_features=hidden_features),
+            create_low_rank_linear(in_features=in_features,
+                                    out_features=hidden_features,
+                                    rank=int(min(in_features, hidden_features) * rank_reduction)
+                                    ),
             nn.GELU(),
             nn.Dropout(p=dropout),
-            nn.Linear(in_features=hidden_features, out_features=out_features),
+            create_low_rank_linear(in_features=hidden_features,
+                                    out_features=out_features, 
+                                    rank=int(min(hidden_features, out_features) * rank_reduction)
+                                    ),
             nn.Dropout(p=dropout)
         )
 
@@ -573,7 +716,8 @@ class SwinTransformerBlock(nn.Module):
                  dropout: float = 0.1,
                  dropout_attention: float = 0.1,
                  dropout_path: float = 0.0,
-                 sequential_self_attention: bool = False) -> None:
+                 sequential_self_attention: bool = False,
+                 rank_reduction: float = 0.1) -> None:
         """
         Constructor method
         :param in_channels: (int) Number of input channels
@@ -586,6 +730,7 @@ class SwinTransformerBlock(nn.Module):
         :param dropout_attention: (float) Dropout rate of attention map
         :param dropout_path: (float) Dropout in main path
         :param sequential_self_attention: (bool) If true sequential self-attention is performed
+        :param rank_reduction (float) Ratio for the low-rank approximation in the linear layers
         """
         # Call super constructor
         super(SwinTransformerBlock, self).__init__()
@@ -619,7 +764,8 @@ class SwinTransformerBlock(nn.Module):
         self.feed_forward_network: nn.Module = FeedForward(in_features=in_channels,
                                                            hidden_features=int(in_channels * ff_feature_ratio),
                                                            dropout=dropout,
-                                                           out_features=in_channels)
+                                                           out_features=in_channels,
+                                                           rank_reduction = rank_reduction)
         # Make attention mask
         self.__make_attention_mask()
 

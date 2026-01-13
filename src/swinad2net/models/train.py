@@ -29,27 +29,78 @@ from .model import SwinAD2Net
 from .dataset import SimpleImageFolder
 import numpy as np
 from sklearn.metrics import accuracy_score, recall_score, precision_score, f1_score
+from torch.amp import GradScaler, autocast
 
+class EarlyStopping:
+    """
+    Early stopping utility to halt training when validation loss does not improve.
+    """
+    def __init__(self, patience: int = 20, verbose: bool = False, delta: float = 0.001, path: str = 'checkpoint_in_best_early_stop.pth'):
+        """
+        Args:
+            - patience (int): How long to wait after last time validation loss improved.
+            - verbose (bool): If True, prints a message for each validation loss improvement.
+            - delta (float): Minimum change in the monitored quantity to qualify as an improvement.
+            - path (str): Path to save the model checkpoint.
+        """
+        self.patience = patience
+        self.verbose = verbose
+        self.delta = delta
+        self.path = path
+        self.counter = 0
+        self.best_score = float('-inf')
+        self.val_loss_min = float('inf')
+        self.best_state_dict = None
+        self.early_stop = False
+
+    def __call__(self, val_loss: float, model: nn.Module):
+        """
+        Call method to check if early stopping condition is met.
+        
+        Args:
+            - val_loss (float): Current validation loss.
+            - model (nn.Module): Model to save if validation loss improves.
+        """
+        score = -val_loss
+
+        if score < self.best_score + self.delta:
+            self.counter += 1
+            if self.verbose:
+                print(f'EarlyStopping counter: {self.counter} out of {self.patience}')
+            if self.counter >= self.patience:
+                self.early_stop = True
+        else:
+            self.best_score = score
+            self.counter = 0
+            self.best_state_dict = model.state_dict()
+
+    def save_checkpoint(self):
+        """
+        Saves model when validation loss decreases.
+        
+        Args:
+            - model (nn.Module): Model to save.
+        """
+        torch.save(self.best_state_dict, self.path)
+        if self.verbose:
+            print(f'The best model saved by early stopping!')
 
 def train_swinad2net(
     train_df: pd.DataFrame,
     val_df: pd.DataFrame = None,
     model: Optional[SwinAD2Net] = None,
-    num_classes: int = 2,
     image_size: int = 224,
-    embed_dim: int = 128,
-    growth_rate: int = 32,
-    dilation_rates: list = [1, 2, 3],
-    patch_size_embed: int = 4,
     batch_size: int = 16,
     num_epochs: int = 50,
     learning_rate: float = 1e-3,
     weight_decay: float = 1e-4,
+    patience: int = 20,
     checkpoint_dir: str = "checkpoints",
     log_dir: str = "runs",
     device: str = "cuda",
-    state_dict=None
-
+    state_dict=None,
+    epoch_stopped: int = None,
+    optimizer: str = "AdamW"
 ):
     """Train a SwinAD2Net image classification model.
 
@@ -70,20 +121,22 @@ def train_swinad2net(
         num_classes (int): Number of classification output classes.
         image_size (int): Input image size (height and width) used by the
             torchvision transforms.
-        embed_dim (int): Embedding dimension passed to `SwinAD2Net`.
-        growth_rate (int): Growth-rate hyperparameter passed to model.
-        dilation_rates (list): List of dilation rates used by the model.
-        patch_size_embed (int): Patch size for the model embedding layer.
         batch_size (int): Training batch size.
         num_epochs (int): Number of epochs to train.
         learning_rate (float): Initial learning rate for the optimizer.
         weight_decay (float): L2 weight decay for optimizer regularization.
+        patience (int): patience for early stopping. It indicates after how many epoches
+        without improvement in loss in validation the training will be stopped.
         checkpoint_dir (str): Directory where checkpoints and best model are
             saved. Created if it does not exist.
         log_dir (str): Directory where TensorBoard logs are written.
         device (str): PyTorch device string, e.g. `'cuda'` or `'cpu'`.
         state_dict (optional): Optional state dictionary used to initialize the
             model parameters before training (useful for fine-tuning).
+        epoch_stopped (int, optional): If resuming training from a checkpoint,
+            the epoch number to start from. Defaults to None.
+        optimizer (str): Optimizer to use for training. Defaults to "AdamW". The available options for now are "AdamW" and "SGD".
+
 
     Returns:
         tuple: A 4-tuple `(model, history, scores, predictions_dict)` where:
@@ -103,9 +156,28 @@ def train_swinad2net(
         - TensorBoard logs are written to `log_dir`. Run
           `tensorboard --logdir {log_dir}` to visualize training progress.
     """
-    
+
+    early_stopping = EarlyStopping(patience=patience, verbose=True, path=os.path.join(checkpoint_dir, 'checkpoint_in_best_early_stop.pth'))
+    use_amp = device.startswith('cuda') and torch.cuda.is_available()
+    scaler = GradScaler("cuda") if use_amp else None
+    DTYPE = torch.bfloat16 # is only used in amp optimization with nvidia gpu
+    num_classes = model.num_classes
+
+    if torch.cuda.is_available():
+        try:
+            torch.backends.cuda.sdp_kernel(
+                enable_flash=True,
+                enable_mem_efficient=True,
+                enable_math=False
+            )
+            print("torch.backends.cuda.sdp_kernel: trying to enable FlashAttention.")
+        except AttributeError:
+            print("sdp_kernel is not available")
+    else:
+        print("CUDA not detected — SDPA/FlashAttention will not be used.")
+
     print(f"\n{'='*60}")
-    print(f"Treinamento do SwinAD2Net")
+    print(f"Training: ")
     print(f"Device: {device} | Classes: {num_classes} | Epochs: {num_epochs}")
     print(f"{'='*60}\n")
     
@@ -115,18 +187,21 @@ def train_swinad2net(
     import torchvision.transforms as T
     
     transform_train = T.Compose([
-        T.Resize([image_size, image_size]), 
-        T.RandomHorizontalFlip(),
-        T.RandomRotation(15),
-        T.ColorJitter(brightness=0.2, contrast=0.2),
-        T.ToTensor(),
-        T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    T.Resize([image_size + 32, image_size + 32]),
+    T.RandomResizedCrop(image_size, scale=(0.7, 1.0), ratio=(0.9, 1.1)),
+    T.RandomHorizontalFlip(p=0.5),
+    T.RandomVerticalFlip(p=0.2),
+    T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.1, hue=0.05),
+    T.RandomRotation(degrees=10),
+    T.ToTensor(),
+    T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ])
     
     transform_val = T.Compose([
-        T.Resize([image_size, image_size]),  
+        T.Resize([image_size, image_size]),
+        T.CenterCrop(image_size),
         T.ToTensor(),
-        T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ])
     
     train_dataset = SimpleImageFolder(df=train_df, transform=transform_train)
@@ -144,26 +219,33 @@ def train_swinad2net(
     model = model.to(device)
     if state_dict:
         model.load_state_dict(state_dict=state_dict)
+
     
     print(f"Parameters: {sum(p.numel() for p in model.parameters()):,}\n")
     
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+    if optimizer == "AdamW":
+        optimizer = optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+        for param_group in optimizer.param_groups:
+            if 'initial_lr' not in param_group:
+                param_group['initial_lr'] = param_group.get('lr', learning_rate)
+        warmup_epochs = 15
+        def warmup_lr(epoch):
+            if epoch < warmup_epochs:
+                return (epoch + 1) / warmup_epochs
+            return 1.0
 
-    warmup_epochs = 15
-    def warmup_lr(epoch):
-        if epoch < warmup_epochs:
-            return (epoch + 1) / warmup_epochs
-        return 1.0
-    
-    warmup_scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=warmup_lr)
-    cosine_annealing_scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs-warmup_epochs)
+        warmup_scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=warmup_lr, last_epoch = epoch_stopped if epoch_stopped is not None else -1)
+        cosine_annealing_scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs-warmup_epochs, last_epoch=epoch_stopped if epoch_stopped is not None else -1) 
+    elif optimizer == "SGD":
+        optimizer = optim.SGD(model.parameters(), lr=learning_rate)
+        scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)
 
     writer = SummaryWriter(log_dir=log_dir)
     best_val_acc = 0.0
     history = {'loss_train': [], 'acc_train': [], 'loss_val': [], 'acc_val': []}
-    
-    for epoch in range(1, num_epochs + 1):
+
+    for epoch in range(epoch_stopped + 1 if epoch_stopped is not None else 1, num_epochs + 1):
         print(f"\nEpoch {epoch}/{num_epochs}")
         print("-" * 40)
         
@@ -175,10 +257,19 @@ def train_swinad2net(
             inputs, labels = inputs.to(device), labels.to(device)
             
             optimizer.zero_grad()
-            outputs = model(inputs)
-            loss = criterion(outputs, labels)
-            loss.backward()
-            optimizer.step()
+            if use_amp:
+                with autocast(device_type=device, dtype=DTYPE):
+                    outputs = model(inputs)
+                    loss = criterion(outputs, labels)
+
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
+            else: 
+                outputs = model(inputs)
+                loss = criterion(outputs, labels)
+                loss.backward()
+                optimizer.step()
             
             running_loss += loss.item() * inputs.size(0)
             _, predicted = torch.max(outputs.data, 1)
@@ -226,19 +317,29 @@ def train_swinad2net(
                 best_val_acc = val_acc
                 torch.save({'epoch': epoch, 'model_state_dict': model.state_dict(), 
                            'val_acc': val_acc}, os.path.join(checkpoint_dir, "best_model.pth"))
-                print(f"✓ Melhor modelo salvo! (Val Acc: {val_acc:.2f}%)")
+                print(f"✓ better model saved! (Val Acc: {val_acc:.2f}%)")
         
-        if epoch <= warmup_epochs:
-            warmup_scheduler.step()
-        else:
-            cosine_annealing_scheduler.step()
+        if optimizer == "SGD":
+            scheduler.step()
+            
+        elif optimizer == "AdamW":
+            if epoch <= warmup_epochs:
+                warmup_scheduler.step()
+            else:
+                cosine_annealing_scheduler.step()
+            writer.add_scalar('Learning_Rate', optimizer.param_groups[0]['lr'], epoch)
 
-        writer.add_scalar('Learning_Rate', optimizer.param_groups[0]['lr'], epoch)
-        
         if epoch % 10 == 0:
             torch.save({'epoch': epoch, 'model_state_dict': model.state_dict()},
                       os.path.join(checkpoint_dir, f"checkpoint_epoch_{epoch}.pth"))
             print(f"✓ Checkpoint salvo: epoch_{epoch}")
+
+        early_stopping(val_loss if val_loader is not None else train_loss, model)
+        if early_stopping.early_stop:
+            if input("Early stopping triggered. Stop training? (y/n): ").lower() == 'y':
+                print("Early stopping activated. Ending training.")
+                early_stopping.save_checkpoint()
+                break
     
     torch.save({'model_state_dict': model.state_dict()}, os.path.join(checkpoint_dir, "final_model.pth"))
     writer.close()

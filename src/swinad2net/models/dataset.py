@@ -113,7 +113,8 @@ class SimpleImageFolder(Dataset):
                  df: pd.DataFrame,
                  transform: Optional[T.Compose] = None,
                  path_col: str = 'path',
-                 label_col: str = 'label'):
+                 label_col: str = 'label',
+                 augment: bool = True):
         """Initializes the dataset from a DataFrame.
         
         Args:
@@ -142,6 +143,8 @@ class SimpleImageFolder(Dataset):
 
         self.num_classes = self.data['label'].nunique()
 
+        self.augment = augment
+
     def __len__(self):
         """Returns the total number of samples in the dataset.
         
@@ -165,9 +168,13 @@ class SimpleImageFolder(Dataset):
         label = row['label']
         
         img = Image.open(img_path).convert('RGB')
+
+        if self.augment:
+            img = apply_random_augmentation(img)
         
         if self.transform:
             img = self.transform(img)
+        
         
         return img, label
 
@@ -327,8 +334,8 @@ def apply_random_augmentation(img: Image.Image) -> Image.Image:
         Image.Image: New PIL Image with random transformations applied.
     """
     from PIL import ImageEnhance
-    angle = random.uniform(-30, 30)
-    img = img.rotate(angle, fillcolor=(0, 0, 0))
+    angle = random.uniform(-15, 15)
+    img = img.rotate(angle, fillcolor=None)
     
     if random.random() > 0.5:
         img = img.transpose(Image.FLIP_LEFT_RIGHT)
@@ -348,7 +355,7 @@ def apply_random_augmentation(img: Image.Image) -> Image.Image:
     
     if random.random() > 0.5:
         w, h = img.size
-        zoom_factor = random.uniform(0.9, 1.1)
+        zoom_factor = random.uniform(0.95, 1.05)
         new_w, new_h = int(w * zoom_factor), int(h * zoom_factor)
         img = img.resize((new_w, new_h), Image.BILINEAR)
         
@@ -363,7 +370,7 @@ def apply_random_augmentation(img: Image.Image) -> Image.Image:
             delta_w = w - new_w
             delta_h = h - new_h
             padding = (delta_w // 2, delta_h // 2, delta_w - (delta_w // 2), delta_h - (delta_h // 2))
-            img = ImageOps.expand(img, padding, fill=(0, 0, 0))
+            img = ImageOps.expand(img, padding, fill=None)
     
     return img
 
