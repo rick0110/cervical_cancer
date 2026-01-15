@@ -234,6 +234,7 @@ class SwinAD2Net_ASPP_like(nn.Module):
 
         self.num_classes = num_classes
         self.drop_path = drop_path
+        self.dropout = dropout
         
         # Patch Embedding
         self.patch_emb = PatchEmb(patch_size=patch_size_embed, in_channels=3, embed_dim=embed_dim)
