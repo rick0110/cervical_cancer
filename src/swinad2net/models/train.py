@@ -85,6 +85,7 @@ class EarlyStopping:
         if self.verbose:
             print(f'The best model saved by early stopping!')
 
+
 def train_swinad2net(
     train_df: pd.DataFrame,
     val_df: pd.DataFrame = None,
