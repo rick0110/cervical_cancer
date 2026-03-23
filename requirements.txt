@@ -1,0 +1,11 @@
+matplotlib
+py7zr
+requests
+tensorboard
+timm
+scikit-learn
+tqdm
+pandas
+numpy
+torchvision
+torch

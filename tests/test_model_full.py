@@ -1,7 +1,7 @@
 import torch
 import pytest
 
-from src.swinad2net.models.model import SwinAD2Net, SwinAD2Net_ASPP_like
+from src.swinad2net.models.model import SwinAD2Net, SwinAD2Net_ASPP_like, A2SDNet121
 
 class TestSwinAD2Net:
     """Tests for the SwinAD2Net model."""
@@ -130,4 +130,15 @@ class TestSwinAD2NetASPPLike:
             y = model(x)
         
         assert y.shape == (2, 2), f"Expected output shape (2, 2), got {y.shape}"
+
+
+class TestA2SDNet121:
+    """Tests for the A2SDNet121 model."""
+
+    def test_forward_shape(self):
+        """Test forward pass produces logits with the expected class dimension."""
+        x = torch.randn(2, 3, 224, 224)
+        model = A2SDNet121(num_classes=5)
+        y = model(x)
+        assert y.shape == (2, 5), f"Expected output shape (2, 5), got {y.shape}"
 

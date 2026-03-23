@@ -18,7 +18,7 @@ from math import floor, sqrt
 import torch.utils.checkpoint as checkpoint
 import timm
 from typing import Tuple, Optional, List, Union, Any
-from timm.models.layers import SqueezeExcite as SEBlock
+from timm.layers import SqueezeExcite as SEBlock
 from torch.nn.utils import parametrize
 
 __all__: List[str] = ["SwinTransformerStage",
@@ -600,7 +600,10 @@ class WindowMultiHeadAttention(nn.Module):
         Method initializes the pair-wise relative positions to compute the positional biases
         """
         indexes: torch.Tensor = torch.arange(self.window_size, device=self.tau.device)
-        coordinates: torch.Tensor = torch.stack(torch.meshgrid([indexes, indexes]), dim=0)
+        coordinates: torch.Tensor = torch.stack(
+            torch.meshgrid([indexes, indexes], indexing='ij'),
+            dim=0,
+        )
         coordinates: torch.Tensor = torch.flatten(coordinates, start_dim=1)
         relative_coordinates: torch.Tensor = coordinates[:, :, None] - coordinates[:, None, :]
         relative_coordinates: torch.Tensor = relative_coordinates.permute(1, 2, 0).reshape(-1, 2).float()
@@ -936,7 +939,7 @@ class DeformableSwinTransformerBlock(SwinTransformerBlock):
         x: torch.Tensor = (x / (self.input_resolution[1] - 1) - 0.5) * 2
         y: torch.Tensor = (y / (self.input_resolution[0] - 1) - 0.5) * 2
         # Make grid [2, height, width]
-        grid: torch.Tensor = torch.stack(torch.meshgrid([x, y])).transpose(1, 2)
+        grid: torch.Tensor = torch.stack(torch.meshgrid([x, y], indexing='ij')).transpose(1, 2)
         # Reshape grid to [1, height, width, 2]
         grid: torch.Tensor = grid.unsqueeze(dim=0).permute(0, 2, 3, 1)
         # Register in module

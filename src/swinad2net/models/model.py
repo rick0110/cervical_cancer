@@ -5,6 +5,130 @@ from .layers import *
 from typing import Optional, List, Tuple, Dict
 import random
 
+
+class SqueezeExcitation(nn.Module):
+    """Channel attention block used in A2SDNet121."""
+
+    def __init__(self, channels: int, reduction: int = 16) -> None:
+        super().__init__()
+        reduced = max(1, channels // reduction)
+        self.pool = nn.AdaptiveAvgPool2d(1)
+        self.fc = nn.Sequential(
+            nn.Linear(channels, reduced, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Linear(reduced, channels, bias=False),
+            nn.Sigmoid(),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        b, c, _, _ = x.shape
+        weights = self.pool(x).view(b, c)
+        weights = self.fc(weights).view(b, c, 1, 1)
+        return x * weights
+
+
+class A2SDDenseLayer(nn.Module):
+    """Dense layer with optional atrous 3x3 convolution."""
+
+    def __init__(
+        self,
+        in_channels: int,
+        growth_rate: int,
+        bn_size: int = 4,
+        drop_rate: float = 0.0,
+        dilation: int = 1,
+    ) -> None:
+        super().__init__()
+        inter_channels = bn_size * growth_rate
+        self.norm1 = nn.BatchNorm2d(in_channels)
+        self.relu1 = nn.ReLU(inplace=True)
+        self.conv1 = nn.Conv2d(in_channels, inter_channels, kernel_size=1, stride=1, bias=False)
+
+        self.norm2 = nn.BatchNorm2d(inter_channels)
+        self.relu2 = nn.ReLU(inplace=True)
+        self.conv2 = nn.Conv2d(
+            inter_channels,
+            growth_rate,
+            kernel_size=3,
+            stride=1,
+            padding=dilation,
+            dilation=dilation,
+            bias=False,
+        )
+        self.drop_rate = drop_rate
+
+    def forward(self, features: List[torch.Tensor]) -> torch.Tensor:
+        x = torch.cat(features, dim=1)
+        x = self.conv1(self.relu1(self.norm1(x)))
+        x = self.conv2(self.relu2(self.norm2(x)))
+
+        if self.drop_rate > 0.0:
+            x = F.dropout(x, p=self.drop_rate, training=self.training)
+        return x
+
+
+class A2SDAtrousDenseBlock(nn.Module):
+    """
+    Atrous Dense Block (ADB) used in A2SDNet121.
+
+    The last three dense layers use atrous convolutions with dilation rates
+    1, 2 and 3, matching the paper's design.
+    """
+
+    def __init__(
+        self,
+        num_layers: int,
+        in_channels: int,
+        growth_rate: int,
+        bn_size: int = 4,
+        drop_rate: float = 0.0,
+    ) -> None:
+        super().__init__()
+        self.layers = nn.ModuleList()
+
+        if num_layers >= 3:
+            dilations = [1] * (num_layers - 3) + [1, 2, 3]
+        else:
+            dilations = [1] * num_layers
+
+        channels = in_channels
+        for dilation in dilations:
+            layer = A2SDDenseLayer(
+                in_channels=channels,
+                growth_rate=growth_rate,
+                bn_size=bn_size,
+                drop_rate=drop_rate,
+                dilation=dilation,
+            )
+            self.layers.append(layer)
+            channels += growth_rate
+
+        self.out_channels = channels
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        features = [x]
+        for layer in self.layers:
+            features.append(layer(features))
+        return torch.cat(features, dim=1)
+
+
+class A2SDTransition(nn.Module):
+    """Transition layer used by A2SDNet121."""
+
+    def __init__(self, in_channels: int, compression: float = 0.5) -> None:
+        super().__init__()
+        out_channels = int(in_channels * compression)
+        self.block = nn.Sequential(
+            nn.BatchNorm2d(in_channels),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1, bias=False),
+            nn.AvgPool2d(kernel_size=2, stride=2),
+        )
+        self.out_channels = out_channels
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.block(x)
+
 class SwinAD2Net(nn.Module):
     """
     SwinAD2Net model combining Swin Transformer blocks with Atrous Dense Blocks and SE transitions.
@@ -180,10 +304,12 @@ class Densenet121(nn.Module):
                 nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
             elif isinstance(m, nn.BatchNorm2d):
                 nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
             elif isinstance(m, nn.Linear):
                 nn.init.normal_(m.weight, 0, 0.01)
-                nn.init.constant_(m.bias, 0)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         features = self.features(x)
@@ -191,6 +317,95 @@ class Densenet121(nn.Module):
         out = F.adaptive_avg_pool2d(out, (1, 1)).flatten(1)
         out = self.classifier(out)
         return out
+
+
+class A2SDNet121(nn.Module):
+    """
+    A2SDNet121 from Zhang et al. (Scientific Reports, 2025).
+
+    Key characteristics replicated from the paper:
+    - Optimized Stem layer: 3x3 conv (s=1, p=1) + 2x2 max-pool (s=2, p=0)
+    - Four Atrous Dense Blocks with depths (6, 12, 16, 24)
+    - Last three layers in each ADB use atrous rates (1, 2, 3)
+    - SE attention after each ADB
+    - Transition layers between the first three ADB modules
+    """
+
+    def __init__(
+        self,
+        num_classes: int = 2,
+        growth_rate: int = 32,
+        block_config: Tuple[int, ...] = (6, 12, 16, 24),
+        bn_size: int = 4,
+        drop_rate: float = 0.0,
+        num_init_features: int = 64,
+        compression: float = 0.5,
+        in_channels: int = 3,
+        se_reduction: int = 16,
+    ) -> None:
+        super().__init__()
+        self.num_classes = num_classes
+
+        # Stem layer as described in the paper.
+        self.stem = nn.Sequential(
+            nn.Conv2d(in_channels, num_init_features, kernel_size=3, stride=1, padding=1, bias=False),
+            nn.BatchNorm2d(num_init_features),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(kernel_size=2, stride=2, padding=0),
+        )
+
+        self.blocks = nn.ModuleList()
+        self.se_blocks = nn.ModuleList()
+        self.transitions = nn.ModuleList()
+
+        num_features = num_init_features
+        for idx, num_layers in enumerate(block_config):
+            block = A2SDAtrousDenseBlock(
+                num_layers=num_layers,
+                in_channels=num_features,
+                growth_rate=growth_rate,
+                bn_size=bn_size,
+                drop_rate=drop_rate,
+            )
+            self.blocks.append(block)
+            num_features = block.out_channels
+
+            self.se_blocks.append(SqueezeExcitation(num_features, reduction=se_reduction))
+
+            if idx != len(block_config) - 1:
+                transition = A2SDTransition(num_features, compression=compression)
+                self.transitions.append(transition)
+                num_features = transition.out_channels
+
+        self.norm_final = nn.BatchNorm2d(num_features)
+        self.classifier = nn.Linear(num_features, num_classes)
+        self._initialize_weights()
+
+    def _initialize_weights(self) -> None:
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.Linear):
+                nn.init.normal_(m.weight, 0, 0.01)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.stem(x)
+
+        for idx, block in enumerate(self.blocks):
+            x = block(x)
+            x = self.se_blocks[idx](x)
+            if idx < len(self.transitions):
+                x = self.transitions[idx](x)
+
+        x = F.relu(self.norm_final(x), inplace=True)
+        x = F.adaptive_avg_pool2d(x, (1, 1)).flatten(1)
+        return self.classifier(x)
 
 class SwinAD2Net_ASPP_like(nn.Module):
     """

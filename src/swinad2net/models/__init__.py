@@ -1,5 +1,5 @@
 # models package
-from .model import SwinAD2Net, SwinAD2Net_ASPP_like, Densenet121
+from .model import SwinAD2Net, SwinAD2Net_ASPP_like, Densenet121, A2SDNet121
 from .train import train_swinad2net, EarlyStopping
 from .lipschitz_regularization import (
     LipschitzRegularizer,
@@ -28,6 +28,7 @@ __all__ = [
     'SwinAD2Net',
     'SwinAD2Net_ASPP_like', 
     'Densenet121',
+    'A2SDNet121',
     
     # Training
     'train_swinad2net',

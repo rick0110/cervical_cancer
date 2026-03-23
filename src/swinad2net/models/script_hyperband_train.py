@@ -36,7 +36,7 @@ from sklearn.metrics import accuracy_score, recall_score, precision_score, f1_sc
 from tqdm import tqdm
 
 # Local imports
-from .model import SwinAD2Net, SwinAD2Net_ASPP_like, Densenet121
+from .model import SwinAD2Net, SwinAD2Net_ASPP_like, Densenet121, A2SDNet121
 from .dataset import SimpleImageFolder
 from .lipschitz_regularization import LipschitzRegularizer, compute_exact_spectral_norm
 from .hyperband_scheduler import HyperbandScheduler, AdaptiveEarlyStopping, Trial, TrialStatus
@@ -132,6 +132,20 @@ MODEL_DEFAULTS = {
         'batch_size': 32,
         'optimizer': 'AdamW',
     },
+    'A2SDNet121': {
+        'embed_dim': 64,  # Not used but kept for compatibility
+        'image_size': 224,
+        'patch_size_embed': 4,  # Not used
+        'growth_rate': 32,
+        'dilation_rates': [1, 2, 3],  # Last three dense layers use atrous rates
+        'compression_rates': [0.5, 0.5, 0.5],  # Not used
+        'drop_path': 0.0,
+        'dropout': 0.0,
+        'learning_rate': 1e-4,
+        'weight_decay': 1e-4,
+        'batch_size': 8,
+        'optimizer': 'SGD',
+    },
 }
 
 # Hyperparameter search space
@@ -139,7 +153,7 @@ MODEL_DEFAULTS = {
 # Use a list for categorical, tuple (min, max, scale) for continuous
 HYPERPARAMETER_SPACE = {
     # Model architecture
-    'model_type': ['SwinAD2Net_ASPP_like', 'Densenet121'],
+    'model_type': ['SwinAD2Net_ASPP_like', 'Densenet121', 'A2SDNet121'],
     
     # Architecture hyperparameters (set to None to use model default)
     'embed_dim': [64, 96, 128],           # Embedding dimension
@@ -423,6 +437,8 @@ def train_single_config(
             drop_path=drop_path,
             dropout=dropout
         )
+    elif model_type == 'A2SDNet121':
+        model = A2SDNet121(num_classes=num_classes)
     elif model_type == 'Densenet121':
         model = Densenet121(num_classes=num_classes)
     else:
