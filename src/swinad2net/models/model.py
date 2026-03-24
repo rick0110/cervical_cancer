@@ -545,4 +545,211 @@ class SwinAD2Net_ASPP_like(nn.Module):
         return x
 
 
+class SwinAD2Net_ASPP_like_SwinResidual(nn.Module):
+    """
+    ASPP-like SwinAD2Net with cross-block residual mixing inside each Swin stage.
+
+    For each stage, outputs are combined as:
+    y1 = swin(x)
+    y2 = swin(y1) + y1
+    y3 = swin(y2) + 1/2 (y1 + y2)
+    ...
+    This follows an average of previous block outputs within the same stage.
+    """
+
+    def __init__(self, num_classes: int = 2,
+                 embed_dim: int = 128,
+                 image_size: int = 224,
+                 patch_size_embed: int = 4,
+                 growth_rate: int = 32,
+                 dilation_rates: Optional[List[int]] = [1, 2, 3],
+                 compression_rates: Optional[List[float]] = [0.25, 0.25, 0.25],
+                 dropout: float = 0.5,
+                 drop_path: float = 0.1
+                 ):
+        super(SwinAD2Net_ASPP_like_SwinResidual, self).__init__()
+
+        self.num_classes = num_classes
+        self.drop_path = drop_path
+        self.dropout = dropout
+
+        # Patch Embedding
+        self.patch_emb = PatchEmb(patch_size=patch_size_embed, in_channels=3, embed_dim=embed_dim)
+
+        # Stage 1: 2x Swin Blocks (56x56)
+        self.swin_block1_1 = SwinTransformerBlock(in_channels=embed_dim,
+                                                  input_resolution=(image_size // patch_size_embed,
+                                                                    image_size // patch_size_embed),
+                                                  number_of_heads=4,
+                                                  window_size=7,
+                                                  shift_size=0,
+                                                  dropout=dropout)
+        self.swin_block1_2 = SwinTransformerBlock(in_channels=embed_dim,
+                                                  input_resolution=(image_size // patch_size_embed,
+                                                                    image_size // patch_size_embed),
+                                                  number_of_heads=4,
+                                                  window_size=7,
+                                                  shift_size=3,
+                                                  dropout=dropout)
+        self.adb_se_trans1 = Adb_SE_Transition_ASPP_like(in_channels=embed_dim,
+                                                         growth_rate=growth_rate,
+                                                         theta=0.5,
+                                                         dilation_rates=dilation_rates,
+                                                         compression_rate=compression_rates[0],
+                                                         p_transition=dropout)
+
+        # Stage 2: 2x Swin Blocks (28x28)
+        ch2 = self.adb_se_trans1.out_channels
+        self.swin_block2_1 = SwinTransformerBlock(in_channels=ch2,
+                                                  input_resolution=(image_size // (patch_size_embed * 2),
+                                                                    image_size // (patch_size_embed * 2)),
+                                                  number_of_heads=4,
+                                                  window_size=7,
+                                                  shift_size=0,
+                                                  dropout=dropout)
+        self.swin_block2_2 = SwinTransformerBlock(in_channels=ch2,
+                                                  input_resolution=(image_size // (patch_size_embed * 2),
+                                                                    image_size // (patch_size_embed * 2)),
+                                                  number_of_heads=4,
+                                                  window_size=7,
+                                                  shift_size=3,
+                                                  dropout=dropout)
+
+        self.adb_se_trans2 = Adb_SE_Transition_ASPP_like(in_channels=ch2,
+                                                         growth_rate=growth_rate,
+                                                         theta=0.5,
+                                                         dilation_rates=dilation_rates,
+                                                         compression_rate=compression_rates[1],
+                                                         p_transition=dropout)
+
+        # Stage 3: 6x Swin Blocks (14x14)
+        ch3 = self.adb_se_trans2.out_channels
+        self.swin_block3_1 = SwinTransformerBlock(in_channels=ch3,
+                                                  input_resolution=(image_size // (patch_size_embed * 4),
+                                                                    image_size // (patch_size_embed * 4)),
+                                                  number_of_heads=2,
+                                                  window_size=7,
+                                                  shift_size=0,
+                                                  dropout=dropout)
+        self.swin_block3_2 = SwinTransformerBlock(in_channels=ch3,
+                                                  input_resolution=(image_size // (patch_size_embed * 4),
+                                                                    image_size // (patch_size_embed * 4)),
+                                                  number_of_heads=2,
+                                                  window_size=7,
+                                                  shift_size=3,
+                                                  dropout=dropout)
+        self.swin_block3_3 = SwinTransformerBlock(in_channels=ch3,
+                                                  input_resolution=(image_size // (patch_size_embed * 4),
+                                                                    image_size // (patch_size_embed * 4)),
+                                                  number_of_heads=2,
+                                                  window_size=7,
+                                                  shift_size=0,
+                                                  dropout=dropout)
+        self.swin_block3_4 = SwinTransformerBlock(in_channels=ch3,
+                                                  input_resolution=(image_size // (patch_size_embed * 4),
+                                                                    image_size // (patch_size_embed * 4)),
+                                                  number_of_heads=2,
+                                                  window_size=7,
+                                                  shift_size=3,
+                                                  dropout=dropout)
+        self.swin_block3_5 = SwinTransformerBlock(in_channels=ch3,
+                                                  input_resolution=(image_size // (patch_size_embed * 4),
+                                                                    image_size // (patch_size_embed * 4)),
+                                                  number_of_heads=2,
+                                                  window_size=7,
+                                                  shift_size=0,
+                                                  dropout=dropout)
+        self.swin_block3_6 = SwinTransformerBlock(in_channels=ch3,
+                                                  input_resolution=(image_size // (patch_size_embed * 4),
+                                                                    image_size // (patch_size_embed * 4)),
+                                                  number_of_heads=2,
+                                                  window_size=7,
+                                                  shift_size=3,
+                                                  dropout=dropout)
+
+        self.adb_se_trans3 = Adb_SE_Transition_ASPP_like(in_channels=ch3,
+                                                         growth_rate=growth_rate,
+                                                         theta=0.5,
+                                                         dilation_rates=dilation_rates,
+                                                         compression_rate=compression_rates[2],
+                                                         p_transition=dropout)
+
+        # Stage 4: 2x Swin Blocks (7x7)
+        ch4 = self.adb_se_trans3.out_channels
+        self.swin_block4_1 = SwinTransformerBlock(in_channels=ch4,
+                                                  input_resolution=(image_size // (patch_size_embed * 8),
+                                                                    image_size // (patch_size_embed * 8)),
+                                                  number_of_heads=1,
+                                                  window_size=7,
+                                                  shift_size=0,
+                                                  dropout=dropout)
+        self.swin_block4_2 = SwinTransformerBlock(in_channels=ch4,
+                                                  input_resolution=(image_size // (patch_size_embed * 8),
+                                                                    image_size // (patch_size_embed * 8)),
+                                                  number_of_heads=1,
+                                                  window_size=7,
+                                                  shift_size=3,
+                                                  dropout=dropout)
+
+        self.global_pool = nn.AdaptiveAvgPool2d(1)
+        self.classifier = nn.Linear(ch4, num_classes)
+
+    @staticmethod
+    def _avg_previous(outputs: List[torch.Tensor]) -> torch.Tensor:
+        if len(outputs) == 1:
+            return outputs[0]
+        return torch.stack(outputs, dim=0).mean(dim=0)
+
+    def forward(self, x):
+        # Patch Embedding
+        x = self.patch_emb(x)
+
+        # Stage 1
+        y1 = self.swin_block1_1(x)
+        prev = [y1]
+        y2 = self.swin_block1_2(y1) + self._avg_previous(prev)
+        x = y2
+
+        # ADB -> SE -> Transition 1
+        x = self.adb_se_trans1(x)
+
+        # Stage 2
+        y1 = self.swin_block2_1(x)
+        prev = [y1]
+        y2 = self.swin_block2_2(y1) + self._avg_previous(prev)
+        x = y2
+
+        # ADB -> SE -> Transition 2
+        x = self.adb_se_trans2(x)
+
+        # Stage 3
+        y1 = self.swin_block3_1(x)
+        prev = [y1]
+        y2 = self.swin_block3_2(y1) + self._avg_previous(prev)
+        prev.append(y2)
+        y3 = self.swin_block3_3(y2) + self._avg_previous(prev)
+        prev.append(y3)
+        y4 = self.swin_block3_4(y3) + self._avg_previous(prev)
+        prev.append(y4)
+        y5 = self.swin_block3_5(y4) + self._avg_previous(prev)
+        prev.append(y5)
+        y6 = self.swin_block3_6(y5) + self._avg_previous(prev)
+        x = y6
+
+        # ADB -> SE -> Transition 3
+        x = self.adb_se_trans3(x)
+
+        # Stage 4
+        y1 = self.swin_block4_1(x)
+        prev = [y1]
+        y2 = self.swin_block4_2(y1) + self._avg_previous(prev)
+        x = y2
+
+        # Global Pooling + Classifier
+        x = self.global_pool(x)
+        x = x.view(x.size(0), -1)
+        x = self.classifier(x)
+        return x
+
+
 

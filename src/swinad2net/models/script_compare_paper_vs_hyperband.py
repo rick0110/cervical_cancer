@@ -42,7 +42,7 @@ from torch.utils.tensorboard import SummaryWriter
 import torchvision.transforms as T
 
 from .dataset import SimpleImageFolder
-from .model import A2SDNet121, SwinAD2Net_ASPP_like
+from .model import A2SDNet121, SwinAD2Net_ASPP_like, SwinAD2Net_ASPP_like_SwinResidual
 
 
 LABEL_MAP = {
@@ -130,6 +130,19 @@ def build_model(model_name: str, num_classes: int) -> Tuple[nn.Module, Dict[str,
         config = dict(A2SDNET121_PAPER_CONFIG)
     elif model_name == "SwinAD2Net_ASPP_like":
         model = SwinAD2Net_ASPP_like(
+            num_classes=num_classes,
+            embed_dim=SWIN_HYPERBAND_CONFIG["embed_dim"],
+            image_size=SWIN_HYPERBAND_CONFIG["image_size"],
+            patch_size_embed=SWIN_HYPERBAND_CONFIG["patch_size_embed"],
+            growth_rate=SWIN_HYPERBAND_CONFIG["growth_rate"],
+            dilation_rates=SWIN_HYPERBAND_CONFIG["dilation_rates"],
+            compression_rates=SWIN_HYPERBAND_CONFIG["compression_rates"],
+            drop_path=SWIN_HYPERBAND_CONFIG["drop_path"],
+            dropout=SWIN_HYPERBAND_CONFIG["dropout"],
+        )
+        config = dict(SWIN_HYPERBAND_CONFIG)
+    elif model_name == "SwinAD2Net_ASPP_like_SwinResidual":
+        model = SwinAD2Net_ASPP_like_SwinResidual(
             num_classes=num_classes,
             embed_dim=SWIN_HYPERBAND_CONFIG["embed_dim"],
             image_size=SWIN_HYPERBAND_CONFIG["image_size"],
@@ -493,7 +506,7 @@ def main() -> None:
     splitter = StratifiedKFold(n_splits=args.folds, shuffle=True, random_state=42)
 
     jobs: List[TrainingJob] = []
-    model_names = ["A2SDNet121", "SwinAD2Net_ASPP_like"]
+    model_names = ["A2SDNet121", "SwinAD2Net_ASPP_like", "SwinAD2Net_ASPP_like_SwinResidual"]
 
     for fold_idx, (train_idx, val_idx) in enumerate(splitter.split(df, df["label"].values), start=1):
         for model_name in model_names:
