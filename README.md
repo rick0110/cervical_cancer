@@ -112,18 +112,13 @@ The repository is implemented in **PyTorch** and includes:
     - `ADB_SE_Transition and ADB_SE_Transition_ASPP_like`: Combines Atrous Dense Block with Squeeze-and-Excitation and TransitionLayer for enhanced feature recalibration.
     - `SwinTransformerBlock`: Wrappers or implementations for the Swin Transformer attention mechanism.
     
-- `src/models/train.py` - **Training Engine**: Contains the `train_swinad2net` function, which manages the full training loop. It handles:
-    - Data loading via PyTorch `DataLoader`.
-    - Loss computation and backpropagation.
-    - Logging training progress to **TensorBoard**.
-    - Model checkpointing.
-- `src/models/script_train.py` - **Training Script**: An example script to execute the training pipeline, demonstrating how to set up the dataset, hyperparameters, and initiate the training process, potentially including K-Fold cross-validation logic.
-- `src/models/dataset.py` - **Data Loading**: Implements `RandomImageDataset` (and potentially others), a custom PyTorch `Dataset` class that handles image loading from file paths (via a DataFrame) or generates synthetic data for testing. It integrates with `torchvision.transforms` for data augmentation.
+- `src/swinad2net/models/script_compare_paper_vs_hyperband.py` - **Main Training Script**: Runs a single stratified split experiment (train/validation/test) to compare `A2SDNet121`, `SwinAD2Net_ASPP_like`, and `SwinAD2Net_ASPP_like_SwinResidual` in parallel. It logs metrics, histograms, confusion matrix and detailed Lipschitz rates in TensorBoard, and only evaluates the test split at the end using the best validation checkpoint.
+- `src/swinad2net/models/dataset.py` - **Data Loading**: Implements custom PyTorch datasets that load images from DataFrames and apply `torchvision.transforms` pipelines.
+- `src/swinad2net/models/lipschitz_regularization.py` - **Lipschitz Utilities**: Provides per-layer spectral norm estimation and network Lipschitz bound helpers used for TensorBoard diagnostics.
 - `tests/` - **Unit Tests**:
     - `test_dataset.py`: unittest for utilitaries classes and functions related to dataset handling.
     - `test_model_full.py`: Verifies the `SwinAD2Net and SwinAD2Net_ASPP_like` model instantiation and forward pass with expected input shapes.
     - `test_layers.py`: Tests individual layers like `AtrousDenseBlock` and `TransitionLayer` to ensure correct output dimensions.
-    - `test_train_loop.py`: Tests the training loop.
 
 ---
 

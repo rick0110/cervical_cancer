@@ -1,18 +1,16 @@
-"""
-Comparative training script: A2SDNet121 (paper protocol) vs SwinAD2Net_ASPP_like (Hyperband config).
+"""Single-run comparative training script.
 
-This script trains both models in parallel using multiple CPU processes and saves:
-- Per-epoch histories (CSV)
-- Final metrics and configs (JSON)
-- Validation predictions (CSV)
-- Aggregated comparison tables (CSV/JSON/PKL)
-- TensorBoard logs for each fold/model
+This script compares A2SDNet121, SwinAD2Net_ASPP_like and
+SwinAD2Net_ASPP_like_SwinResidual in a single experiment using:
+- One stratified train/validation/test split (no cross-validation)
+- Validation during training
+- Test evaluation only after training is complete
+- TensorBoard logging, including per-layer Lipschitz rates
 
 Usage example:
     python -m src.swinad2net.models.script_compare_paper_vs_hyperband \
         --data-dir ./data \
         --output-dir ./comparison_runs \
-        --folds 5 \
         --workers 2 \
         --device cpu
 """
@@ -21,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import pickle
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -35,13 +34,14 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from sklearn.metrics import accuracy_score, confusion_matrix, f1_score, precision_score, recall_score
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import train_test_split
 from torch.amp import GradScaler, autocast
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 import torchvision.transforms as T
 
 from .dataset import SimpleImageFolder
+from .lipschitz_regularization import LipschitzRegularizer
 from .model import A2SDNet121, SwinAD2Net_ASPP_like, SwinAD2Net_ASPP_like_SwinResidual
 
 
@@ -92,14 +92,15 @@ CONFUSION_MATRIX_LOG_EVERY = 5
 @dataclass
 class TrainingJob:
     model_name: str
-    fold_id: int
     train_indices: List[int]
     val_indices: List[int]
+    test_indices: List[int]
     run_dir: str
     data_dir: str
     device: str
     num_classes: int
     num_workers_loader: int
+    seed: int
 
 
 def load_dataset(data_dir: str, label_map: Dict[str, int]) -> pd.DataFrame:
@@ -122,6 +123,43 @@ def load_dataset(data_dir: str, label_map: Dict[str, int]) -> pd.DataFrame:
     df = df.dropna().reset_index(drop=True)
     df["label"] = df["label"].astype(int)
     return df
+
+
+def stratified_train_val_test_split(
+    df: pd.DataFrame,
+    train_ratio: float,
+    val_ratio: float,
+    test_ratio: float,
+    seed: int,
+) -> Tuple[List[int], List[int], List[int]]:
+    total = train_ratio + val_ratio + test_ratio
+    if not np.isclose(total, 1.0):
+        raise ValueError(f"train_ratio + val_ratio + test_ratio must be 1.0, got {total}")
+
+    if min(train_ratio, val_ratio, test_ratio) <= 0.0:
+        raise ValueError("train_ratio, val_ratio and test_ratio must be > 0")
+
+    labels = df["label"].values
+    all_indices = np.arange(len(df))
+
+    train_idx, holdout_idx = train_test_split(
+        all_indices,
+        test_size=(val_ratio + test_ratio),
+        random_state=seed,
+        stratify=labels,
+    )
+
+    holdout_labels = labels[holdout_idx]
+    val_share_in_holdout = val_ratio / (val_ratio + test_ratio)
+
+    val_idx, test_idx = train_test_split(
+        holdout_idx,
+        test_size=(1.0 - val_share_in_holdout),
+        random_state=seed,
+        stratify=holdout_labels,
+    )
+
+    return train_idx.tolist(), val_idx.tolist(), test_idx.tolist()
 
 
 def build_model(model_name: str, num_classes: int) -> Tuple[nn.Module, Dict[str, Any]]:
@@ -188,7 +226,7 @@ def build_transforms(model_name: str, image_size: int) -> Tuple[T.Compose, T.Com
             ]
         )
 
-    val_transform = T.Compose(
+    eval_transform = T.Compose(
         [
             T.Resize((image_size, image_size)),
             T.CenterCrop(image_size),
@@ -197,30 +235,149 @@ def build_transforms(model_name: str, image_size: int) -> Tuple[T.Compose, T.Com
         ]
     )
 
-    return train_transform, val_transform
+    return train_transform, eval_transform
+
+
+def create_optimizer(model: nn.Module, config: Dict[str, Any]) -> optim.Optimizer:
+    optimizer_name = str(config["optimizer"])
+    if optimizer_name == "SGD":
+        return optim.SGD(
+            model.parameters(),
+            lr=float(config["learning_rate"]),
+            weight_decay=float(config["weight_decay"]),
+        )
+    if optimizer_name == "AdamW":
+        return optim.AdamW(
+            model.parameters(),
+            lr=float(config["learning_rate"]),
+            weight_decay=float(config["weight_decay"]),
+        )
+    raise ValueError(f"Unsupported optimizer: {optimizer_name}")
+
+
+def evaluate_model(
+    model: nn.Module,
+    loader: DataLoader,
+    criterion: nn.Module,
+    device: torch.device,
+    num_classes: int,
+    split_name: str,
+) -> Dict[str, Any]:
+    model.eval()
+    running_loss = 0.0
+    total = 0
+    correct = 0
+    all_preds: List[int] = []
+    all_labels: List[int] = []
+
+    with torch.no_grad():
+        for inputs, labels in loader:
+            inputs = inputs.to(device)
+            labels = labels.to(device)
+            outputs = model(inputs)
+            loss = criterion(outputs, labels)
+
+            running_loss += loss.item() * inputs.size(0)
+            preds = outputs.argmax(dim=1)
+            total += labels.size(0)
+            correct += (preds == labels).sum().item()
+            all_preds.extend(preds.cpu().numpy().tolist())
+            all_labels.extend(labels.cpu().numpy().tolist())
+
+    avg_loss = running_loss / max(total, 1)
+    acc = correct / max(total, 1)
+    cm = confusion_matrix(all_labels, all_preds, labels=list(range(num_classes)))
+
+    return {
+        f"{split_name}_accuracy": float(accuracy_score(all_labels, all_preds)),
+        f"{split_name}_precision": float(
+            precision_score(all_labels, all_preds, average="weighted", zero_division=0)
+        ),
+        f"{split_name}_recall": float(recall_score(all_labels, all_preds, average="weighted", zero_division=0)),
+        f"{split_name}_f1": float(f1_score(all_labels, all_preds, average="weighted", zero_division=0)),
+        f"{split_name}_loss": float(avg_loss),
+        f"{split_name}_acc_percent": float(100.0 * acc),
+        f"{split_name}_cm": cm.tolist(),
+        f"{split_name}_labels": all_labels,
+        f"{split_name}_preds": all_preds,
+    }
+
+
+def log_confusion_matrix(writer: SummaryWriter, cm: np.ndarray, num_classes: int, tag: str, epoch: int) -> None:
+    fig, ax = plt.subplots(figsize=(6, 5))
+    im = ax.imshow(cm, interpolation="nearest", cmap="Blues")
+    ax.figure.colorbar(im, ax=ax)
+    ax.set_title(tag)
+    ax.set_xlabel("Predicted")
+    ax.set_ylabel("True")
+    ax.set_xticks(range(num_classes))
+    ax.set_yticks(range(num_classes))
+
+    for i in range(cm.shape[0]):
+        for j in range(cm.shape[1]):
+            ax.text(
+                j,
+                i,
+                str(cm[i, j]),
+                ha="center",
+                va="center",
+                color="white" if cm[i, j] > cm.max() / 2 else "black",
+            )
+
+    fig.tight_layout()
+    writer.add_figure(tag, fig, global_step=epoch)
+    plt.close(fig)
+
+
+def log_lipschitz_to_tensorboard(
+    writer: SummaryWriter,
+    regularizer: LipschitzRegularizer,
+    model: nn.Module,
+    epoch: int,
+) -> Tuple[float, float]:
+    layer_lips = regularizer.compute_layer_lipschitz(model)
+    if not layer_lips:
+        writer.add_scalar("Lipschitz/NetworkBound", 1.0, epoch)
+        writer.add_scalar("Lipschitz/NetworkBoundLog10", 0.0, epoch)
+        return 1.0, 0.0
+
+    network_bound = 1.0
+    for layer_name, lip_tensor in layer_lips.items():
+        lip_value = float(lip_tensor.detach().item())
+        network_bound *= max(lip_value, 1e-12)
+        tag_name = layer_name.replace(".", "/")
+        writer.add_scalar(f"Lipschitz/Layers/{tag_name}", lip_value, epoch)
+
+    network_log10 = math.log10(max(network_bound, 1e-12))
+    writer.add_scalar("Lipschitz/NetworkBound", network_bound, epoch)
+    writer.add_scalar("Lipschitz/NetworkBoundLog10", network_log10, epoch)
+    writer.add_scalar("Lipschitz/NumTrackedLayers", len(layer_lips), epoch)
+
+    return network_bound, network_log10
 
 
 def train_and_evaluate(job: TrainingJob, full_df: pd.DataFrame) -> Dict[str, Any]:
-    torch.manual_seed(42 + job.fold_id)
-    np.random.seed(42 + job.fold_id)
+    torch.manual_seed(job.seed)
+    np.random.seed(job.seed)
 
     os.makedirs(job.run_dir, exist_ok=True)
-    model_dir = os.path.join(job.run_dir, job.model_name, f"fold_{job.fold_id}")
+    model_dir = os.path.join(job.run_dir, job.model_name, "single_run")
     os.makedirs(model_dir, exist_ok=True)
 
-    tb_dir = os.path.join(job.run_dir, "tensorboard", job.model_name, f"fold_{job.fold_id}")
+    tb_dir = os.path.join(job.run_dir, "tensorboard", job.model_name, "single_run")
     os.makedirs(tb_dir, exist_ok=True)
 
     train_df = full_df.iloc[job.train_indices].reset_index(drop=True)
     val_df = full_df.iloc[job.val_indices].reset_index(drop=True)
+    test_df = full_df.iloc[job.test_indices].reset_index(drop=True)
 
     model, train_config = build_model(job.model_name, job.num_classes)
     image_size = int(train_config["image_size"])
-
-    train_transform, val_transform = build_transforms(job.model_name, image_size)
+    train_transform, eval_transform = build_transforms(job.model_name, image_size)
 
     train_dataset = SimpleImageFolder(df=train_df, transform=train_transform, augment=False)
-    val_dataset = SimpleImageFolder(df=val_df, transform=val_transform, augment=False)
+    val_dataset = SimpleImageFolder(df=val_df, transform=eval_transform, augment=False)
+    test_dataset = SimpleImageFolder(df=test_df, transform=eval_transform, augment=False)
 
     train_loader = DataLoader(
         train_dataset,
@@ -236,39 +393,38 @@ def train_and_evaluate(job: TrainingJob, full_df: pd.DataFrame) -> Dict[str, Any
         num_workers=job.num_workers_loader,
         pin_memory=False,
     )
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=int(train_config["batch_size"]),
+        shuffle=False,
+        num_workers=job.num_workers_loader,
+        pin_memory=False,
+    )
 
     device = torch.device(job.device)
     model = model.to(device)
 
     criterion = nn.CrossEntropyLoss()
-    optimizer_name = str(train_config["optimizer"])
-    if optimizer_name == "SGD":
-        optimizer = optim.SGD(
-            model.parameters(),
-            lr=float(train_config["learning_rate"]),
-            weight_decay=float(train_config["weight_decay"]),
-        )
-    elif optimizer_name == "AdamW":
-        optimizer = optim.AdamW(
-            model.parameters(),
-            lr=float(train_config["learning_rate"]),
-            weight_decay=float(train_config["weight_decay"]),
-        )
-    else:
-        raise ValueError(f"Unsupported optimizer: {optimizer_name}")
-
+    optimizer = create_optimizer(model, train_config)
     scheduler = optim.lr_scheduler.StepLR(
         optimizer,
         step_size=int(train_config["step_size"]),
         gamma=float(train_config["gamma"]),
     )
 
-    epochs = int(train_config["epochs"])
     use_amp = device.type == "cuda" and torch.cuda.is_available()
     scaler = GradScaler("cuda") if use_amp else None
 
-    writer = SummaryWriter(log_dir=tb_dir)
+    lipschitz_regularizer = LipschitzRegularizer(
+        upper_bound=10.0,
+        lower_bound=0.1,
+        lambda_upper=0.0,
+        lambda_lower=0.0,
+        use_exact_svd=False,
+        n_power_iterations=1,
+    )
 
+    writer = SummaryWriter(log_dir=tb_dir)
     history: Dict[str, List[float]] = {
         "train_loss": [],
         "train_acc": [],
@@ -278,10 +434,13 @@ def train_and_evaluate(job: TrainingJob, full_df: pd.DataFrame) -> Dict[str, Any
         "grad_norm": [],
         "param_norm": [],
         "gpu_mem_mb": [],
+        "lipschitz_bound": [],
+        "lipschitz_bound_log10": [],
     }
 
     best_val_acc = -1.0
     best_ckpt_path = os.path.join(model_dir, "best_model.pth")
+    epochs = int(train_config["epochs"])
 
     for epoch in range(1, epochs + 1):
         model.train()
@@ -312,7 +471,6 @@ def train_and_evaluate(job: TrainingJob, full_df: pd.DataFrame) -> Dict[str, Any
             train_total += labels.size(0)
             train_correct += (preds == labels).sum().item()
 
-        # Compute gradient and parameter norms for training diagnostics.
         total_grad_sq = 0.0
         total_param_sq = 0.0
         for _, param in model.named_parameters():
@@ -326,43 +484,31 @@ def train_and_evaluate(job: TrainingJob, full_df: pd.DataFrame) -> Dict[str, Any
         train_loss = train_running_loss / max(train_total, 1)
         train_acc = 100.0 * train_correct / max(train_total, 1)
 
-        model.eval()
-        val_running_loss = 0.0
-        val_total = 0
-        val_correct = 0
-        all_preds: List[int] = []
-        all_labels: List[int] = []
-
-        with torch.no_grad():
-            for inputs, labels in val_loader:
-                inputs = inputs.to(device)
-                labels = labels.to(device)
-                outputs = model(inputs)
-                loss = criterion(outputs, labels)
-
-                val_running_loss += loss.item() * inputs.size(0)
-                preds = outputs.argmax(dim=1)
-                val_total += labels.size(0)
-                val_correct += (preds == labels).sum().item()
-
-                all_preds.extend(preds.cpu().numpy().tolist())
-                all_labels.extend(labels.cpu().numpy().tolist())
-
-        val_loss = val_running_loss / max(val_total, 1)
-        val_acc = 100.0 * val_correct / max(val_total, 1)
-
-        cm = confusion_matrix(
-            all_labels,
-            all_preds,
-            labels=list(range(job.num_classes)),
+        val_eval = evaluate_model(
+            model=model,
+            loader=val_loader,
+            criterion=criterion,
+            device=device,
+            num_classes=job.num_classes,
+            split_name="val",
         )
+        val_loss = float(val_eval["val_loss"])
+        val_acc = float(val_eval["val_acc_percent"])
+        cm = np.array(val_eval["val_cm"])
 
         scheduler.step()
-        lr = optimizer.param_groups[0]["lr"]
+        lr = float(optimizer.param_groups[0]["lr"])
 
         gpu_mem_mb = 0.0
         if use_amp:
             gpu_mem_mb = float(torch.cuda.memory_allocated(device=device) / (1024 ** 2))
+
+        lip_bound, lip_bound_log10 = log_lipschitz_to_tensorboard(
+            writer=writer,
+            regularizer=lipschitz_regularizer,
+            model=model,
+            epoch=epoch,
+        )
 
         history["train_loss"].append(train_loss)
         history["train_acc"].append(train_acc)
@@ -372,6 +518,8 @@ def train_and_evaluate(job: TrainingJob, full_df: pd.DataFrame) -> Dict[str, Any
         history["grad_norm"].append(grad_norm)
         history["param_norm"].append(param_norm)
         history["gpu_mem_mb"].append(gpu_mem_mb)
+        history["lipschitz_bound"].append(lip_bound)
+        history["lipschitz_bound_log10"].append(lip_bound_log10)
 
         writer.add_scalar("Loss/train", train_loss, epoch)
         writer.add_scalar("Loss/val", val_loss, epoch)
@@ -392,29 +540,13 @@ def train_and_evaluate(job: TrainingJob, full_df: pd.DataFrame) -> Dict[str, Any
 
         should_log_cm = (epoch % CONFUSION_MATRIX_LOG_EVERY == 0) or epoch == 1 or epoch == epochs
         if should_log_cm:
-            fig, ax = plt.subplots(figsize=(6, 5))
-            im = ax.imshow(cm, interpolation="nearest", cmap="Blues")
-            ax.figure.colorbar(im, ax=ax)
-            ax.set_title(f"Confusion Matrix - {job.model_name} Fold {job.fold_id}")
-            ax.set_xlabel("Predicted")
-            ax.set_ylabel("True")
-            ax.set_xticks(range(job.num_classes))
-            ax.set_yticks(range(job.num_classes))
-
-            for i in range(cm.shape[0]):
-                for j in range(cm.shape[1]):
-                    ax.text(
-                        j,
-                        i,
-                        str(cm[i, j]),
-                        ha="center",
-                        va="center",
-                        color="white" if cm[i, j] > cm.max() / 2 else "black",
-                    )
-
-            fig.tight_layout()
-            writer.add_figure("Validation/ConfusionMatrix", fig, global_step=epoch)
-            plt.close(fig)
+            log_confusion_matrix(
+                writer=writer,
+                cm=cm,
+                num_classes=job.num_classes,
+                tag="Validation/ConfusionMatrix",
+                epoch=epoch,
+            )
 
         if val_acc > best_val_acc:
             best_val_acc = val_acc
@@ -440,20 +572,63 @@ def train_and_evaluate(job: TrainingJob, full_df: pd.DataFrame) -> Dict[str, Any
         final_ckpt_path,
     )
 
+    if os.path.exists(best_ckpt_path):
+        best_state = torch.load(best_ckpt_path, map_location=device)
+        model.load_state_dict(best_state["model_state_dict"])
+
+    val_eval_final = evaluate_model(
+        model=model,
+        loader=val_loader,
+        criterion=criterion,
+        device=device,
+        num_classes=job.num_classes,
+        split_name="val",
+    )
+
+    test_eval_final = evaluate_model(
+        model=model,
+        loader=test_loader,
+        criterion=criterion,
+        device=device,
+        num_classes=job.num_classes,
+        split_name="test",
+    )
+
     final_metrics = {
-        "val_accuracy": float(accuracy_score(all_labels, all_preds)),
-        "val_precision": float(precision_score(all_labels, all_preds, average="weighted", zero_division=0)),
-        "val_recall": float(recall_score(all_labels, all_preds, average="weighted", zero_division=0)),
-        "val_f1": float(f1_score(all_labels, all_preds, average="weighted", zero_division=0)),
-        "val_loss": float(history["val_loss"][-1]),
         "best_val_acc_percent": float(best_val_acc),
+        "train_samples": len(train_df),
+        "val_samples": len(val_df),
+        "test_samples": len(test_df),
+        "val_accuracy": float(val_eval_final["val_accuracy"]),
+        "val_precision": float(val_eval_final["val_precision"]),
+        "val_recall": float(val_eval_final["val_recall"]),
+        "val_f1": float(val_eval_final["val_f1"]),
+        "val_loss": float(val_eval_final["val_loss"]),
+        "test_accuracy": float(test_eval_final["test_accuracy"]),
+        "test_precision": float(test_eval_final["test_precision"]),
+        "test_recall": float(test_eval_final["test_recall"]),
+        "test_f1": float(test_eval_final["test_f1"]),
+        "test_loss": float(test_eval_final["test_loss"]),
     }
 
     history_path = os.path.join(model_dir, "history.csv")
     pd.DataFrame(history).to_csv(history_path, index=False)
 
-    preds_path = os.path.join(model_dir, "val_predictions.csv")
-    pd.DataFrame({"label": all_labels, "prediction": all_preds}).to_csv(preds_path, index=False)
+    val_preds_path = os.path.join(model_dir, "val_predictions.csv")
+    pd.DataFrame(
+        {
+            "label": val_eval_final["val_labels"],
+            "prediction": val_eval_final["val_preds"],
+        }
+    ).to_csv(val_preds_path, index=False)
+
+    test_preds_path = os.path.join(model_dir, "test_predictions.csv")
+    pd.DataFrame(
+        {
+            "label": test_eval_final["test_labels"],
+            "prediction": test_eval_final["test_preds"],
+        }
+    ).to_csv(test_preds_path, index=False)
 
     metrics_path = os.path.join(model_dir, "metrics.json")
     with open(metrics_path, "w", encoding="utf-8") as f:
@@ -463,16 +638,29 @@ def train_and_evaluate(job: TrainingJob, full_df: pd.DataFrame) -> Dict[str, Any
     with open(config_path, "w", encoding="utf-8") as f:
         json.dump(train_config, f, indent=2)
 
+    split_path = os.path.join(model_dir, "split_indices.json")
+    with open(split_path, "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "train_indices": job.train_indices,
+                "val_indices": job.val_indices,
+                "test_indices": job.test_indices,
+            },
+            f,
+            indent=2,
+        )
+
     return {
         "model_name": job.model_name,
-        "fold_id": job.fold_id,
         "metrics": final_metrics,
         "history": history,
         "paths": {
             "history_csv": history_path,
-            "predictions_csv": preds_path,
+            "val_predictions_csv": val_preds_path,
+            "test_predictions_csv": test_preds_path,
             "metrics_json": metrics_path,
             "config_json": config_path,
+            "split_indices_json": split_path,
             "best_checkpoint": best_ckpt_path,
             "final_checkpoint": final_ckpt_path,
             "tensorboard_dir": tb_dir,
@@ -481,14 +669,17 @@ def train_and_evaluate(job: TrainingJob, full_df: pd.DataFrame) -> Dict[str, Any
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Parallel comparison: A2SDNet121 vs SwinAD2Net_ASPP_like")
+    parser = argparse.ArgumentParser(description="Single-run comparison: paper protocol vs hyperband config")
     parser.add_argument("--data-dir", type=str, default="./data", help="Directory with images")
     parser.add_argument("--output-dir", type=str, default="./comparison_runs", help="Output root directory")
-    parser.add_argument("--folds", type=int, default=10, help="Number of stratified folds")
     parser.add_argument("--workers", type=int, default=2, help="Number of parallel processes")
     parser.add_argument("--loader-workers", type=int, default=0, help="DataLoader workers per process")
     parser.add_argument("--device", type=str, default="cpu", help="cpu or cuda")
     parser.add_argument("--num-classes", type=int, default=5, help="Number of output classes")
+    parser.add_argument("--train-ratio", type=float, default=0.7, help="Train split ratio")
+    parser.add_argument("--val-ratio", type=float, default=0.15, help="Validation split ratio")
+    parser.add_argument("--test-ratio", type=float, default=0.15, help="Test split ratio")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed")
     return parser.parse_args()
 
 
@@ -503,28 +694,37 @@ def main() -> None:
     if len(df) == 0:
         raise RuntimeError(f"No images found in {args.data_dir}")
 
-    splitter = StratifiedKFold(n_splits=args.folds, shuffle=True, random_state=42)
+    train_idx, val_idx, test_idx = stratified_train_val_test_split(
+        df=df,
+        train_ratio=args.train_ratio,
+        val_ratio=args.val_ratio,
+        test_ratio=args.test_ratio,
+        seed=args.seed,
+    )
 
-    jobs: List[TrainingJob] = []
     model_names = ["A2SDNet121", "SwinAD2Net_ASPP_like", "SwinAD2Net_ASPP_like_SwinResidual"]
+    jobs: List[TrainingJob] = []
 
-    for fold_idx, (train_idx, val_idx) in enumerate(splitter.split(df, df["label"].values), start=1):
-        for model_name in model_names:
-            jobs.append(
-                TrainingJob(
-                    model_name=model_name,
-                    fold_id=fold_idx,
-                    train_indices=train_idx.tolist(),
-                    val_indices=val_idx.tolist(),
-                    run_dir=run_dir,
-                    data_dir=args.data_dir,
-                    device=args.device,
-                    num_classes=args.num_classes,
-                    num_workers_loader=args.loader_workers,
-                )
+    for offset, model_name in enumerate(model_names):
+        jobs.append(
+            TrainingJob(
+                model_name=model_name,
+                train_indices=train_idx,
+                val_indices=val_idx,
+                test_indices=test_idx,
+                run_dir=run_dir,
+                data_dir=args.data_dir,
+                device=args.device,
+                num_classes=args.num_classes,
+                num_workers_loader=args.loader_workers,
+                seed=args.seed + offset,
             )
+        )
 
-    print(f"Submitting {len(jobs)} jobs with {args.workers} workers")
+    print(
+        f"Submitting {len(jobs)} jobs with {args.workers} workers | "
+        f"train={len(train_idx)} val={len(val_idx)} test={len(test_idx)}"
+    )
 
     all_results: List[Dict[str, Any]] = []
     with ProcessPoolExecutor(max_workers=args.workers) as executor:
@@ -535,11 +735,12 @@ def main() -> None:
                 result = future.result()
                 all_results.append(result)
                 print(
-                    f"Completed {job.model_name} fold {job.fold_id} | "
-                    f"val_acc={result['metrics']['val_accuracy']:.4f}"
+                    f"Completed {job.model_name} | "
+                    f"val_acc={result['metrics']['val_accuracy']:.4f} "
+                    f"test_acc={result['metrics']['test_accuracy']:.4f}"
                 )
             except Exception as exc:
-                print(f"Failed {job.model_name} fold {job.fold_id}: {exc}")
+                print(f"Failed {job.model_name}: {exc}")
 
     if not all_results:
         raise RuntimeError("All jobs failed")
@@ -550,34 +751,48 @@ def main() -> None:
         rows.append(
             {
                 "model": item["model_name"],
-                "fold": item["fold_id"],
+                "train_samples": metrics["train_samples"],
+                "val_samples": metrics["val_samples"],
+                "test_samples": metrics["test_samples"],
                 "val_accuracy": metrics["val_accuracy"],
                 "val_precision": metrics["val_precision"],
                 "val_recall": metrics["val_recall"],
                 "val_f1": metrics["val_f1"],
                 "val_loss": metrics["val_loss"],
+                "test_accuracy": metrics["test_accuracy"],
+                "test_precision": metrics["test_precision"],
+                "test_recall": metrics["test_recall"],
+                "test_f1": metrics["test_f1"],
+                "test_loss": metrics["test_loss"],
                 "best_val_acc_percent": metrics["best_val_acc_percent"],
             }
         )
 
-    results_df = pd.DataFrame(rows).sort_values(["model", "fold"]).reset_index(drop=True)
-    results_csv = os.path.join(run_dir, "comparison_per_fold.csv")
+    results_df = pd.DataFrame(rows).sort_values(["model"]).reset_index(drop=True)
+    results_csv = os.path.join(run_dir, "comparison_single_run.csv")
     results_df.to_csv(results_csv, index=False)
 
     summary_df = (
-        results_df.groupby("model")
-        .agg(
-            val_accuracy_mean=("val_accuracy", "mean"),
-            val_accuracy_std=("val_accuracy", "std"),
-            val_f1_mean=("val_f1", "mean"),
-            val_f1_std=("val_f1", "std"),
-            val_loss_mean=("val_loss", "mean"),
-            val_loss_std=("val_loss", "std"),
-        )
+        results_df[["val_accuracy", "val_f1", "val_loss", "test_accuracy", "test_f1", "test_loss"]]
+        .agg(["mean", "std"]) 
         .reset_index()
+        .rename(columns={"index": "stat"})
     )
     summary_csv = os.path.join(run_dir, "comparison_summary.csv")
     summary_df.to_csv(summary_csv, index=False)
+
+    split_metadata = {
+        "train_indices": train_idx,
+        "val_indices": val_idx,
+        "test_indices": test_idx,
+        "train_ratio": args.train_ratio,
+        "val_ratio": args.val_ratio,
+        "test_ratio": args.test_ratio,
+        "seed": args.seed,
+    }
+    split_path = os.path.join(run_dir, "global_split.json")
+    with open(split_path, "w", encoding="utf-8") as f:
+        json.dump(split_metadata, f, indent=2)
 
     all_results_json = os.path.join(run_dir, "all_results.json")
     with open(all_results_json, "w", encoding="utf-8") as f:
@@ -588,10 +803,11 @@ def main() -> None:
         pickle.dump(all_results, f)
 
     print("=" * 70)
-    print("Comparison finished")
+    print("Comparison finished (single split, no cross-validation)")
     print(f"Run directory: {run_dir}")
-    print(f"Per-fold metrics: {results_csv}")
+    print(f"Per-model metrics: {results_csv}")
     print(f"Summary metrics: {summary_csv}")
+    print(f"Global split metadata: {split_path}")
     print(f"TensorBoard root: {os.path.join(run_dir, 'tensorboard')}")
     print("=" * 70)
 
