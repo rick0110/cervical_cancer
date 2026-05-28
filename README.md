@@ -63,7 +63,7 @@ pytest -q
 
 - Zhang, Y., et al. (2025). *An automatic cervical cell classification model based on improved DenseNet121*.  
   https://www.nature.com/articles/s41598-025-87953-1
-- Liu, Z., et al. (2021). *Swin transformer: Hierarchical vision transformer using shifted windows*.  
+- Liu, Z., et al. (2021). *Swin Transformer: Hierarchical Vision Transformer using Shifted Windows*.  
   https://arxiv.org/pdf/2103.14030
-- Huang, G., et al. (2016). *Densely connected convolutional networks*.  
+- Huang, G., et al. (2016). *Densely Connected Convolutional Networks*.  
   https://arxiv.org/abs/1608.06993
