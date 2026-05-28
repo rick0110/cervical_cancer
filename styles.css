@@ -1,0 +1,85 @@
+:root {
+  color-scheme: dark;
+  --bg: #0f172a;
+  --card: #111827;
+  --text: #e5e7eb;
+  --muted: #94a3b8;
+  --accent: #38bdf8;
+  --border: #1f2937;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  background: radial-gradient(circle at top, #1e293b 0%, var(--bg) 55%);
+  color: var(--text);
+}
+
+.page {
+  width: min(860px, 92%);
+  margin: 48px auto;
+  display: grid;
+  gap: 18px;
+}
+
+.card {
+  background: color-mix(in srgb, var(--card) 92%, black 8%);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 24px;
+}
+
+.hero h1 {
+  margin: 0;
+  font-size: clamp(1.8rem, 4vw, 2.6rem);
+}
+
+.eyebrow {
+  margin: 0 0 8px;
+  color: var(--muted);
+}
+
+.tagline {
+  margin-top: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.actions {
+  margin-top: 20px;
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.actions a {
+  text-decoration: none;
+  color: #0b1120;
+  background: var(--accent);
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-weight: 600;
+}
+
+h2 {
+  margin-top: 0;
+}
+
+h3 {
+  margin-bottom: 8px;
+}
+
+p {
+  margin: 0;
+  line-height: 1.6;
+}
+
+.inline-link {
+  display: inline-block;
+  margin-top: 14px;
+  color: var(--accent);
+}
