@@ -21,13 +21,18 @@ dist/
 
 # Data and models
 data/
-data/
+data_raw/
 checkpoints/
 *.pth
 *.pt
 *.BMP
 imagenet/
 model_imagenet/
+
+# Experiment outputs (regenerate via train.py / run_experiments.py)
+results/
+*.log
+
 # Jupyter
 .ipynb_checkpoints/
 
