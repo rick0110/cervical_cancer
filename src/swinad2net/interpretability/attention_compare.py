@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Grad-CAM comparison between the paper replica (A2SDNet121) and our SwinAD2Net.
+"""Attention comparison between the paper replica (A2SDNet121) and our SwinAD2Net.
 
 A2SDNet121 has no explicit self-attention mechanism (only SE channel
 recalibration), so Grad-CAM on the last spatial feature map before global
@@ -7,10 +7,17 @@ average pooling is used as a common, architecture-agnostic lens for both
 networks: it answers "which image regions most influenced this
 prediction?" for either model, which is the fair basis for comparison.
 
-For each sampled image this script renders a 3-panel figure (original |
-A2SDNet121 Grad-CAM | SwinAD2Net Grad-CAM) and also reports a simple
-quantitative "focus" score per model -- the normalized Shannon entropy of
-the CAM heatmap (lower = more spatially concentrated / focused attention,
+Grad-CAM was designed for CNNs, though, and is only an indirect proxy for
+what a transformer's self-attention actually does. For SwinAD2Net we
+therefore *also* compute a genuine self-attention rollout (Abnar &
+Zuidema, 2020) over its last Swin stage -- see
+``swin_attention_rollout.py`` -- which has no equivalent for A2SDNet121
+since it has no self-attention to roll out.
+
+For each sampled image this script renders a 4-panel figure (original |
+A2SDNet121 Grad-CAM | SwinAD2Net Grad-CAM | SwinAD2Net attention rollout)
+and reports quantitative "focus" scores -- the normalized Shannon entropy
+of each heatmap (lower = more spatially concentrated / focused attention,
 higher = more diffuse) -- averaged over the sampled images, so the
 qualitative figures are backed by a number.
 
@@ -39,6 +46,7 @@ from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
 from ..models.data_registry import DATASET_SPECS
 from ..models.model import A2SDNet121, SwinAD2Net_ASPP_like, SwinAD2Net_ASPP_like_SwinResidual
 from ..models.train import IMAGE_SIZE, build_transforms, load_dataframe, MODEL_BUILDERS
+from .swin_attention_rollout import swin_stage4_rollout
 
 TARGET_LAYER_NAME = {
     "A2SDNet121": "norm_final",
@@ -124,6 +132,7 @@ def run(args: argparse.Namespace) -> None:
 
     entropies_paper: List[float] = []
     entropies_ours: List[float] = []
+    entropies_rollout: List[float] = []
     fig_paths: List[str] = []
 
     for path, label_id, class_name in samples:
@@ -135,20 +144,25 @@ def run(args: argparse.Namespace) -> None:
         target = [ClassifierOutputTarget(label_id)]
         grayscale_cam_paper = cam_paper(input_tensor=input_tensor, targets=target)[0]
         grayscale_cam_ours = cam_ours(input_tensor=input_tensor, targets=target)[0]
+        rollout_map = swin_stage4_rollout(model_ours, input_tensor, image_size=IMAGE_SIZE).numpy()
 
         entropies_paper.append(cam_entropy(grayscale_cam_paper))
         entropies_ours.append(cam_entropy(grayscale_cam_ours))
+        entropies_rollout.append(cam_entropy(rollout_map))
 
         overlay_paper = show_cam_on_image(rgb_for_overlay, grayscale_cam_paper, use_rgb=True)
         overlay_ours = show_cam_on_image(rgb_for_overlay, grayscale_cam_ours, use_rgb=True)
+        overlay_rollout = show_cam_on_image(rgb_for_overlay, rollout_map, use_rgb=True)
 
-        fig, axes = plt.subplots(1, 3, figsize=(10, 3.5))
+        fig, axes = plt.subplots(1, 4, figsize=(13, 3.5))
         axes[0].imshow(rgb_for_overlay)
         axes[0].set_title(f"{class_name}\n(original)", fontsize=9)
         axes[1].imshow(overlay_paper)
         axes[1].set_title("A2SDNet121 (paper)\nGrad-CAM", fontsize=9)
         axes[2].imshow(overlay_ours)
         axes[2].set_title(f"{ours_model_name}\n(ours) Grad-CAM", fontsize=9)
+        axes[3].imshow(overlay_rollout)
+        axes[3].set_title(f"{ours_model_name}\n(ours) attention rollout", fontsize=9)
         for ax in axes:
             ax.axis("off")
         fig.tight_layout()
@@ -166,10 +180,13 @@ def run(args: argparse.Namespace) -> None:
         "num_samples": len(samples),
         "mean_cam_entropy_paper_A2SDNet121": float(np.mean(entropies_paper)) if entropies_paper else None,
         "mean_cam_entropy_ours": float(np.mean(entropies_ours)) if entropies_ours else None,
+        "mean_rollout_entropy_ours": float(np.mean(entropies_rollout)) if entropies_rollout else None,
         "note": (
-            "Lower entropy means Grad-CAM attention is more spatially concentrated "
+            "Lower entropy means attention is more spatially concentrated "
             "(focused on a smaller region); higher entropy means it is more diffuse "
-            "across the image."
+            "across the image. Grad-CAM entropies are comparable across both models; "
+            "the attention-rollout entropy uses SwinAD2Net's own self-attention weights "
+            "and has no A2SDNet121 equivalent (see swin_attention_rollout.py)."
         ),
         "figures": fig_paths,
     }

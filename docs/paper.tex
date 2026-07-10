@@ -46,7 +46,7 @@ Richard Viana \\
     \maketitle
     \begin{abstract}
     \noindent
-    Automated cervical cytology classification can reduce the workload and inter-observer variability of manual Pap-smear screening. This report presents \textbf{SwinAD2Net}, a hybrid architecture that combines Swin Transformer window attention with Atrous Dense Blocks (ADB) and Squeeze-and-Excitation (SE) channel recalibration, and compares it head-to-head with a from-scratch reproduction of \textbf{A2SDNet121}, the DenseNet121-based model proposed by Zhang \emph{et al.}~\cite{zhang2025}. Both models are trained under an identical, compute-constrained protocol (bf16 mixed precision, 3-fold stratified cross-validation, early stopping) on the Herlev and SIPaKMeD datasets, individually and pooled into a shared binary (normal/abnormal) task. A small sequential hyperparameter search selects the best SwinAD2Net configuration before the final comparison. Under this harmonized budget, SwinAD2Net outperforms the A2SDNet121 reproduction on every metric, in every dataset/task combination, while using roughly \textbf{3$\times$ fewer parameters} (2.22M vs.\ 6.87M) --- for example 98.74\% vs.\ 88.94\% accuracy on SIPaKMeD binary classification, and 95.78\% vs.\ 76.19\% on the SIPaKMeD 5-class task. We report this result together with an important caveat: our A2SDNet121 reproduction falls well short of the numbers Zhang \emph{et al.} report for the same architecture (e.g.\ 32.8\% vs.\ their 99.14\% on Herlev 7-class), most plausibly because the original protocol trains for 300 epochs with a schedule tuned specifically for that network, while our budget uses early stopping across ten separate runs. We use Grad-CAM~\cite{selvaraju2017} --- the same diagnostic tool used in the original paper --- to compare where each network attends when making a prediction, finding that A2SDNet121 tends to produce more spatially concentrated saliency maps centered on the nucleus, while SwinAD2Net's attention is measurably more diffuse, consistent with the global mixing behavior of window attention.
+    Automated cervical cytology classification can reduce the workload and inter-observer variability of manual Pap-smear screening. This report presents \textbf{SwinAD2Net}, a hybrid architecture that combines Swin Transformer window attention with Atrous Dense Blocks (ADB) and Squeeze-and-Excitation (SE) channel recalibration, and compares it head-to-head with a from-scratch reproduction of \textbf{A2SDNet121}, the DenseNet121-based model proposed by Zhang \emph{et al.}~\cite{zhang2025}. Both models are trained under an identical, compute-constrained protocol (bf16 mixed precision, 3-fold stratified cross-validation, early stopping) on the Herlev and SIPaKMeD datasets, individually and pooled into a shared binary (normal/abnormal) task. A small sequential hyperparameter search selects the best SwinAD2Net configuration before the final comparison. Under this harmonized budget, SwinAD2Net outperforms the A2SDNet121 reproduction on every metric, in every dataset/task combination, while using roughly \textbf{3$\times$ fewer parameters} (2.22M vs.\ 6.87M) --- for example 98.74\% vs.\ 88.94\% accuracy on SIPaKMeD binary classification, and 95.78\% vs.\ 76.19\% on the SIPaKMeD 5-class task. We report this result together with an important caveat: our A2SDNet121 reproduction falls well short of the numbers Zhang \emph{et al.} report for the same architecture (e.g.\ 32.8\% vs.\ their 99.14\% on Herlev 7-class), most plausibly because the original protocol trains for 300 epochs with a schedule tuned specifically for that network, while our budget uses early stopping across ten separate runs. We use Grad-CAM~\cite{selvaraju2017} --- the same diagnostic tool used in the original paper --- to compare where each network attends when making a prediction, finding that A2SDNet121 tends to produce more spatially concentrated saliency maps centered on the nucleus, while SwinAD2Net's attention is measurably more diffuse. However, a genuine self-attention rollout~\cite{abnar2020} computed from SwinAD2Net's own attention weights (impossible for A2SDNet121, which has no self-attention) is consistently \emph{more} concentrated than SwinAD2Net's own Grad-CAM map, and on one dataset is even the most concentrated map of the three --- suggesting that part of the ``diffuse SwinAD2Net'' impression from Grad-CAM alone is an artifact of applying a CNN-native diagnostic to a transformer, not a genuine property of what the network attends to.
     \end{abstract}
     \vspace{0.4cm}
   \end{@twocolumnfalse}
@@ -67,7 +67,7 @@ This project asks a concrete, falsifiable question: \emph{does replacing/augment
     \item Running a small, strictly \emph{sequential} hyperparameter search (Section~\ref{sec:hpsearch}) to select a competitive SwinAD2Net configuration without hand-tuning;
     \item Training both architectures under one \emph{harmonized} protocol --- same optimizer family knobs, same early-stopping policy, same 3-fold cross-validation --- on Herlev, SIPaKMeD, and a pooled binary task (Section~\ref{sec:protocol});
     \item Reporting results honestly, including where our A2SDNet121 reproduction \emph{fails} to reach the original paper's numbers, and explaining why (Section~\ref{sec:results});
-    \item Comparing the two networks' Grad-CAM saliency maps~\cite{selvaraju2017} to see whether they attend to the same cytological structures (Section~\ref{sec:interpretability}).
+    \item Comparing the two networks' Grad-CAM saliency maps~\cite{selvaraju2017}, plus a genuine self-attention rollout~\cite{abnar2020} native to SwinAD2Net's own mechanism, to see whether they attend to the same cytological structures (Section~\ref{sec:interpretability}).
 \end{enumerate}
 
 % =============================================================================
@@ -78,7 +78,7 @@ This project asks a concrete, falsifiable question: \emph{does replacing/augment
 
 \textbf{Swin Transformer.} Liu \emph{et al.}~\cite{liu2021swin} restrict self-attention to non-overlapping local windows and alternate a shifted-window partitioning between consecutive blocks so that information still propagates across window boundaries, giving linear (rather than quadratic) complexity in the number of tokens while retaining most of the modeling benefit of full self-attention. This project's window-attention implementation follows the Swin~V2-style refinements of cosine attention with a learned temperature $\tau$ and a log-spaced continuous relative-position bias (a small MLP over relative coordinates), which improve training stability at the window sizes used here.
 
-\textbf{Grad-CAM.} Gradient-weighted Class Activation Mapping~\cite{selvaraju2017} produces a coarse localization heatmap for a target class by weighting the last convolutional (or, here, last spatial pre-pooling) feature map by the class-specific gradients flowing into it. Zhang \emph{et al.} already use Grad-CAM to argue that their SE-augmented model attends more to nuclei than a plain DenseNet121; Section~\ref{sec:interpretability} repeats this diagnostic to compare A2SDNet121 against SwinAD2Net.
+\textbf{Grad-CAM.} Gradient-weighted Class Activation Mapping~\cite{selvaraju2017} produces a coarse localization heatmap for a target class by weighting the last convolutional (or, here, last spatial pre-pooling) feature map by the class-specific gradients flowing into it. Zhang \emph{et al.} already use Grad-CAM to argue that their SE-augmented model attends more to nuclei than a plain DenseNet121; Section~\ref{sec:interpretability} repeats this diagnostic to compare A2SDNet121 against SwinAD2Net. Because Grad-CAM was designed for CNN feature maps, we complement it with \textbf{attention rollout}~\cite{abnar2020}, which composes a transformer's \emph{own} layer-wise self-attention matrices (with an added residual identity, as in the original formulation) to trace how strongly each output token's representation actually depends on each input token --- a diagnostic with no equivalent for a network, like A2SDNet121, that has no self-attention.
 
 % =============================================================================
 \section{Datasets and Tasks}
@@ -301,44 +301,57 @@ The fair conclusion is therefore \emph{not} "SwinAD2Net beats the A2SDNet121 arc
 \label{sec:interpretability}
 % =============================================================================
 
-\code{A2SDNet121} has no explicit self-attention mechanism (only SE channel recalibration acting on local convolutional features), so a common, architecture-agnostic lens is needed for a fair comparison. We use \textbf{Grad-CAM}~\cite{selvaraju2017} on the last spatial feature map before global average pooling in \emph{both} networks --- the same diagnostic Zhang \emph{et al.}\ use in their own Fig.~14 to compare DenseNet121 against their SE-augmented model. For every sampled image we also compute the \textbf{normalized Shannon entropy} of the Grad-CAM heatmap as a simple focus score (lower = more spatially concentrated; higher = more diffuse).
+\code{A2SDNet121} has no explicit self-attention mechanism (only SE channel recalibration acting on local convolutional features), so a common, architecture-agnostic lens is needed for a fair comparison. We use \textbf{Grad-CAM}~\cite{selvaraju2017} on the last spatial feature map before global average pooling in \emph{both} networks --- the same diagnostic Zhang \emph{et al.}\ use in their own Fig.~14 to compare DenseNet121 against their SE-augmented model.
+
+\textbf{Grad-CAM was designed for CNNs, though, and is only an indirect proxy for what a transformer's self-attention actually does.} We therefore also compute a genuine \textbf{self-attention rollout}~\cite{abnar2020} using SwinAD2Net's \emph{real} attention weights from its last stage --- no equivalent exists for A2SDNet121, since it has no self-attention to roll out. This is inexpensive here because, at $7{\times}7$ resolution, the last stage's window size (7) is not smaller than the feature map, so \code{SwinTransformerBlock} disables windowing entirely (Section~\ref{sec:variants}'s \code{make\_windows} check) and both stage-4 blocks already compute one full $49{\times}49$ self-attention over the whole feature map --- it is already global, so no cross-window bookkeeping is needed to roll it out across the two blocks. Concretely, we recompute each block's softmax attention matrix $A_\ell$ (bypassing the fused \code{scaled\_dot\_product\_attention} kernel, which never exposes it), add the residual-connection identity and re-normalize rows ($\hat{A}_\ell = (A_\ell + I) / \text{rowsum}$), and compose the two blocks as $R = \hat{A}_2 \hat{A}_1$. Since the classifier reads the global-average-pooled output, each original spatial location's relevance is the column-mean of $R$, which we reshape to $7{\times}7$ and upsample to $224{\times}224$.
+
+For every sampled image we compute the \textbf{normalized Shannon entropy} of each heatmap as a simple focus score (lower = more spatially concentrated; higher = more diffuse).
 
 \begin{table}[H]
-\centering\footnotesize
-\begin{tabular}{@{}p{0.42\linewidth}cc@{}}
+\centering\scriptsize
+\begin{tabular}{@{}p{0.26\linewidth}p{0.17\linewidth}p{0.17\linewidth}p{0.17\linewidth}@{}}
 \toprule
-\textbf{Comparison} & \textbf{A2SDNet121} & \textbf{SwinAD2Net} \\
+\textbf{Comparison} & \textbf{A2SDNet121} & \textbf{Ours}\newline\textbf{(Grad-CAM)} & \textbf{Ours}\newline\textbf{(rollout)} \\
 \midrule
-SIPaKMeD, 5-class (10 imgs) & 0.980 & 0.992 \\
-Combined, binary (6 imgs) & 0.957 & 0.974 \\
+SIPaKMeD, 5-cls (10 imgs) & 0.980 & 0.992 & \textbf{0.974} \\[2pt]
+Combined, bin. (6 imgs) & \textbf{0.957} & 0.974 & 0.970 \\
 \bottomrule
 \end{tabular}
-\caption{Mean normalized Grad-CAM entropy (lower = more concentrated). A2SDNet121 is consistently more concentrated than SwinAD2Net across both comparisons.}
+\caption{Mean normalized entropy of each attention map (lower = more concentrated; bold = most concentrated per row). SwinAD2Net's Grad-CAM column uses the same method as A2SDNet121's; its rollout column uses its own self-attention weights and has no A2SDNet121 equivalent.}
 \label{tab:entropy}
 \end{table}
 
-Across both comparisons (Table~\ref{tab:entropy}), \textbf{A2SDNet121 produces more spatially concentrated Grad-CAM maps}, usually centered tightly on the nucleus/cell body --- consistent with Zhang \emph{et al.}'s own claim that their SE-augmented model "pays more attention to key regions (nuclei)." SwinAD2Net's attention is measurably more diffuse, sometimes spreading into the background. This tracks the architectural difference: SE re-weights \emph{channels} globally but still acts on local convolutional features, while Swin's window attention explicitly mixes information across spatial positions, which shows up as a less spatially-sharp saliency map even when the underlying prediction is more accurate (Table~\ref{tab:mainresults}).
+The headline finding from Grad-CAM alone was ``A2SDNet121 produces more spatially concentrated maps than SwinAD2Net.'' \textbf{The rollout column complicates that story in an interesting way}: SwinAD2Net's own self-attention is \emph{more} concentrated than its own Grad-CAM map in both comparisons (Table~\ref{tab:entropy}), and on SIPaKMeD it is the single most concentrated map of the three --- more concentrated than A2SDNet121's Grad-CAM. Part of what looked like diffuse SwinAD2Net attention was, at least partly, an artifact of applying a CNN-shaped diagnostic to a transformer, rather than a property of what the transformer itself is doing. Qualitatively (Figures~\ref{fig:cam_koilocytotic}--\ref{fig:cam_normal}), the rollout sometimes lands on the same nucleus region Grad-CAM highlights, and sometimes highlights the \textbf{cell boundary/shape} instead of the interior (Figure~\ref{fig:cam_abnormal}) --- a cue neither Grad-CAM map surfaces, and a plausible way a transformer component adds information beyond a CNN, since irregular cell/nuclear contour is itself a recognized cytological marker of dysplasia.
 
-\begin{figure}[H]
+\begin{figure*}[t]
     \centering
-    \includegraphics[width=\linewidth]{sipakmed_multiclass_metaplastic_example.png}
-    \caption{SIPaKMeD, Metaplastic cell. Both models correctly focus on the cell interior; A2SDNet121's hotspot is tighter.}
+    \includegraphics[width=0.85\textwidth]{sipakmed_multiclass_koilocytotic_example.png}
+    \caption{SIPaKMeD, Koilocytotic cell. Panels left to right: original, A2SDNet121 Grad-CAM, SwinAD2Net Grad-CAM, SwinAD2Net attention rollout. The rollout (4th panel) lands on essentially the same nucleus hotspot as A2SDNet121's Grad-CAM (2nd panel), while SwinAD2Net's own Grad-CAM (3rd panel) is diffuse across the whole cell.}
+    \label{fig:cam_koilocytotic}
+\end{figure*}
+
+\begin{figure*}[t]
+    \centering
+    \includegraphics[width=0.85\textwidth]{sipakmed_multiclass_metaplastic_example.png}
+    \caption{SIPaKMeD, Metaplastic cell. All three maps agree on the same general region; the rollout's hotspot is shifted slightly lower than the two Grad-CAM maps.}
     \label{fig:cam_metaplastic}
-\end{figure}
+\end{figure*}
 
-\begin{figure}[H]
+\begin{figure*}[t]
     \centering
-    \includegraphics[width=\linewidth]{combined_binary_abnormal_example.png}
-    \caption{Combined dataset, abnormal cell. A2SDNet121 concentrates on the nucleus/cytoplasm; SwinAD2Net's attention bleeds into the surrounding background (top-right corner).}
+    \includegraphics[width=0.85\textwidth]{combined_binary_abnormal_example.png}
+    \caption{Combined dataset, abnormal cell. Both Grad-CAM maps center on the nucleus/cytoplasm interior, but the rollout instead highlights the cell's lower boundary --- a genuinely different, shape-sensitive signal neither Grad-CAM variant captures.}
     \label{fig:cam_abnormal}
-\end{figure}
+\end{figure*}
 
-\begin{figure}[H]
+\begin{figure*}[t]
     \centering
-    \includegraphics[width=\linewidth]{combined_binary_normal_example.png}
-    \caption{Combined dataset, normal cell --- a counter-example where the trend reverses: SwinAD2Net's attention is a tight hotspot directly on the nucleus, while A2SDNet121 spreads across nearly the whole cytoplasm. Table~\ref{tab:entropy}'s entropy numbers are averages; per-image behavior varies, and this figure is a reminder not to over-read a small qualitative sample as a universal architectural rule.}
+    \includegraphics[width=0.85\textwidth]{combined_binary_normal_example.png}
+    \caption{Combined dataset, normal cell --- a counter-example for the Grad-CAM-only story: SwinAD2Net's own Grad-CAM (3rd panel) is a tighter hotspot on the nucleus than A2SDNet121's (2nd panel), while the rollout (4th panel) spreads across both the nucleus and a cell-edge region.}
     \label{fig:cam_normal}
-\end{figure}
+\end{figure*}
+
+\textbf{Takeaway.} ``Grad-CAM looks more diffuse for SwinAD2Net'' should not be read as ``SwinAD2Net's attention mechanism is worse.'' Under this project's own tuned configuration, SwinAD2Net also has substantially higher classification accuracy than A2SDNet121 on every task (Table~\ref{tab:mainresults}), and a diagnostic native to its actual mechanism (rollout) shows attention that is often just as concentrated, sometimes on the same nucleus region, and sometimes on complementary structural cues Grad-CAM does not reveal at all.
 
 % =============================================================================
 \section{Limitations and Future Work}
@@ -349,6 +362,7 @@ Across both comparisons (Table~\ref{tab:entropy}), \textbf{A2SDNet121 produces m
     \item \textbf{Class imbalance} on Herlev binary was not addressed with class weighting, focal loss, or resampling; this is a likely quick win for both models, especially A2SDNet121.
     \item \textbf{Cross-validation depth}: 3-fold here vs.\ 5--10-fold in the paper trades statistical precision for wall-clock time; the std.\ deviations in Table~\ref{tab:mainresults} should be read as indicative, not final.
     \item \textbf{Interpretability sample size} (6--10 images per comparison) is small; a systematic study would sample proportionally across all classes and correlate saliency-map properties with correctness/confidence.
+    \item \textbf{Attention rollout is computed on stage 4 only} (where windowing happens to be disabled, making the computation cheap and exact). Extending it through the windowed, shifted attention in stages 1--3 --- and bridging across the non-attention ADB/SE/Transition layers between stages --- would give a whole-network rollout instead of a last-stage one, at the cost of nontrivial extra bookkeeping (placing per-window attention back onto the full spatial grid, undoing the cyclic shift, and composing across resolution changes).
     \item The \code{SwinAD2Net} (sequential ADB) variant and \code{DeformableSwinTransformerBlock} are implemented and unit-tested but not evaluated in the main comparison; both are candidates for future ablations.
 \end{itemize}
 
@@ -356,7 +370,7 @@ Across both comparisons (Table~\ref{tab:entropy}), \textbf{A2SDNet121 produces m
 \section{Conclusion}
 % =============================================================================
 
-Under an identical, compute-constrained training protocol, a Swin Transformer / Atrous Dense Block hybrid (SwinAD2Net) outperforms a from-scratch reproduction of A2SDNet121 on every metric across binary and multi-class cervical cytology classification, on Herlev, SIPaKMeD, and a pooled binary task, while using roughly a third of the parameters. This result should be read alongside an equally important negative finding: our A2SDNet121 reproduction did not reach the accuracy the original paper reports for the same architecture, most plausibly due to a much shorter training budget and the absence of a matched hyperparameter search. Grad-CAM analysis shows the two networks tend to attend differently --- A2SDNet121 more concentrated on the nucleus, SwinAD2Net more diffuse across the cell --- which is consistent with, but not fully explained by, their different attention mechanisms. We view this project less as a claim of architectural superiority and more as a transparent case study in how much a reported result depends on training budget and per-model tuning, alongside a working, tested, and reasonably efficient hybrid architecture that others can build on.
+Under an identical, compute-constrained training protocol, a Swin Transformer / Atrous Dense Block hybrid (SwinAD2Net) outperforms a from-scratch reproduction of A2SDNet121 on every metric across binary and multi-class cervical cytology classification, on Herlev, SIPaKMeD, and a pooled binary task, while using roughly a third of the parameters. This result should be read alongside an equally important negative finding: our A2SDNet121 reproduction did not reach the accuracy the original paper reports for the same architecture, most plausibly due to a much shorter training budget and the absence of a matched hyperparameter search. Grad-CAM analysis alone suggested the two networks attend differently --- A2SDNet121 more concentrated on the nucleus, SwinAD2Net more diffuse --- but a diagnostic native to SwinAD2Net's actual mechanism (self-attention rollout) told a more nuanced story: its real attention is often as concentrated as, or more concentrated than, A2SDNet121's Grad-CAM, and sometimes highlights structural cues (cell boundaries) that neither Grad-CAM map reveals at all. This is itself a broader lesson: interpretability comparisons across architectures are only as fair as the diagnostic tool allows, and a CNN-native method can understate a transformer's actual focus. We view this project less as a claim of architectural superiority and more as a transparent case study in how much a reported result depends on training budget, per-model tuning, and even the choice of explanation method, alongside a working, tested, and reasonably efficient hybrid architecture that others can build on.
 
 % =============================================================================
 \begin{thebibliography}{9}
@@ -375,6 +389,9 @@ R.~R.~Selvaraju, M.~Cogswell, A.~Das, R.~Vedantam, D.~Parikh, D.~Batra, ``Grad-C
 
 \bibitem{chen2017deeplab}
 L.-C.~Chen, G.~Papandreou, F.~Schroff, H.~Adam, ``Rethinking Atrous Convolution for Semantic Image Segmentation,'' \emph{arXiv:1706.05587}, 2017.
+
+\bibitem{abnar2020}
+S.~Abnar, W.~Zuidema, ``Quantifying Attention Flow in Transformers,'' \emph{ACL}, 2020. \url{https://arxiv.org/abs/2005.00928}
 
 \end{thebibliography}
 
