@@ -5,6 +5,8 @@
 This repository presents **SwinAD2Net**, a hybrid deep-learning model family for the **automated classification of cervical cytology images**.
 The architecture combines **transformer-based window attention** with **multi-scale (atrous) convolutional feature extraction**, and is benchmarked head-to-head against a from-scratch reproduction of **A2SDNet121**, the DenseNet121-based model proposed by Zhang *et al.* (2025) [[DOI:10.1038/s41598-025-87953-1](https://doi.org/10.1038/s41598-025-87953-1)].
 
+📄 **[Read the full two-column paper](docs/paper.pdf)** ([LaTeX source](docs/paper.tex)) for a detailed write-up of the architecture, the rationale behind every design choice, the complete results tables, and the interpretability figures summarized below.
+
 ---
 
 ## Introduction
