@@ -39,11 +39,11 @@ Two publicly available datasets are used:
 | Herlev / MDE-Lab Pap Smear Collection | [mde-lab.aegean.gr](https://mde-lab.aegean.gr/index.php/downloads/) | 917 single-cell images | 7 (fine) / 2 (binary) |
 | SIPaKMeD | [cs.uoi.gr/~marina/sipakmed.html](https://www.cs.uoi.gr/~marina/sipakmed.html) | 4,049 single-cell **CROPPED** images | 5 (fine) / 2 (binary) |
 
-Both counts match what is reported in Zhang *et al.* (2025). For SIPaKMeD we use the single-cell `CROPPED` folders shipped in the official release (4,049 images total), which is the standard classification split used in comparable work — not the larger, uncropped whole-slide images. An earlier version of this README stated 4,096 SIPaKMeD images; that was a typo and has been corrected.
+Both counts match what is reported in Zhang *et al.* (2025). For SIPaKMeD we use the single-cell `CROPPED` folders shipped in the official release (4,049 images total), which is the standard classification split used in comparable work — not the larger, uncropped whole-slide images.
 
 **Augmentation.** Training images are augmented **on the fly** via `torchvision.transforms` (random resized crop, horizontal/vertical flip, color jitter, rotation) applied fresh every epoch, rather than by pre-generating and storing extra copies of every file on disk. This gives at least as much effective augmentation diversity as a fixed 7x-replicated static set, without inflating dataset size or I/O, and it is the approach implemented in [`train.py`](src/swinad2net/models/train.py). Validation/evaluation images only get resizing and normalization — no augmentation.
 
-**Cross-validation.** Each (dataset, task) combination is evaluated with stratified k-fold cross-validation (`sklearn.model_selection.StratifiedKFold`). For every fold, the held-out fold is used purely for validation/early-stopping and as the reported metric for that fold (no further held-out test split), following the same "evaluate per fold, average across folds" protocol described for this project's earlier experiments; the training pool of each fold is augmented on the fly as described above, the held-out fold is not.
+**Cross-validation.** Each (dataset, task) combination is evaluated with stratified k-fold cross-validation (`sklearn.model_selection.StratifiedKFold`). For every fold, the held-out fold is used purely for validation/early-stopping and as the reported metric for that fold — there is no further held-out test split, so the final numbers are an average across folds. The training pool of each fold is augmented on the fly as described above; the held-out fold is not.
 
 ---
 
@@ -80,7 +80,7 @@ The design goal is to keep the strong local feature extraction of DenseNet121 (t
 
 ## Hyperparameter search
 
-Rather than hand-picking a SwinAD2Net configuration, [`hyperparameter_search.py`](src/swinad2net/models/hyperparameter_search.py) runs a small **sequential** random search (never multiple GPU jobs at once — see [Why the old parallel script was removed](#why-the-old-parallel-comparison-script-was-removed)) over:
+Rather than hand-picking a SwinAD2Net configuration, [`hyperparameter_search.py`](src/swinad2net/models/hyperparameter_search.py) runs a small **sequential** random search (never multiple GPU jobs at once — see [why training is always sequential](#why-training-is-always-sequential-never-parallel-on-one-gpu)) over:
 
 - model variant: `SwinAD2Net_ASPP_like` vs `SwinAD2Net_ASPP_like_SwinResidual`
 - `embed_dim ∈ {64, 128}`
@@ -160,22 +160,25 @@ Given all three points, **the fair conclusion is not "SwinAD2Net beats A2SDNet12
 
 ## Interpretability: where does each model look?
 
-`A2SDNet121` has no explicit self-attention mechanism (only SE channel recalibration), so a common, architecture-agnostic lens is needed to compare it fairly against SwinAD2Net's window attention. [`attention_compare.py`](src/swinad2net/interpretability/attention_compare.py) uses **Grad-CAM** on the last spatial feature map before global average pooling in *both* networks (`norm_final` for A2SDNet121, the final Swin block for SwinAD2Net), which is the same technique the original paper itself uses (Fig. 14 of Zhang *et al.*, comparing DenseNet121 vs. their SE-augmented SDNet121) — so this repeats the paper's own diagnostic, extended to our architecture.
+`A2SDNet121` has no explicit self-attention mechanism — only SE channel recalibration, which reweights *channels* but still acts on local convolutional features. `SwinAD2Net`, by contrast, has real self-attention in its Swin blocks. Comparing the two fairly therefore takes two complementary tools, both implemented in [`src/swinad2net/interpretability/`](src/swinad2net/interpretability/):
 
-**Grad-CAM was designed for CNNs, though, and is only an indirect proxy for what a transformer's self-attention actually does.** So in addition to Grad-CAM, [`swin_attention_rollout.py`](src/swinad2net/interpretability/swin_attention_rollout.py) computes a genuine **self-attention rollout** (Abnar & Zuidema, 2020) using SwinAD2Net's *real* attention weights from its last stage — no equivalent exists for A2SDNet121 since it has no self-attention to roll out. This is possible cheaply because at 7×7 resolution the last stage's window size (7) is not smaller than the feature map, so `SwinTransformerBlock` disables windowing entirely there (see the `make_windows` check in `layers.py`) and both stage-4 blocks already compute one full 49×49 self-attention over the whole feature map — i.e. it's already global, so no cross-window bookkeeping is needed to roll it out across the two blocks.
+1. **Grad-CAM** ([`attention_compare.py`](src/swinad2net/interpretability/attention_compare.py)) — a gradient-based saliency method applied to the last spatial feature map before global average pooling, in *both* networks. It works for any CNN-shaped feature map regardless of what produced it, which is what makes it usable on both architectures at once. It is also the exact diagnostic Zhang *et al.* use in their own paper (Fig. 14, comparing DenseNet121 against their SE-augmented model), so this repeats their own methodology here.
+2. **Self-attention rollout** ([`swin_attention_rollout.py`](src/swinad2net/interpretability/swin_attention_rollout.py), Abnar & Zuidema 2020) — reads SwinAD2Net's *actual* self-attention weights from its last stage and composes them across its final two Swin blocks. There is no equivalent for A2SDNet121, since it has nothing to read: it has no self-attention mechanism at all. This computation happens to be cheap and exact here because at 7×7 resolution, the last stage's window size (7) already spans the whole feature map, so `SwinTransformerBlock` disables windowing entirely (see the `make_windows` check in `layers.py`) and both stage-4 blocks already compute one full 49×49 self-attention over the entire image — no cross-window bookkeeping is needed to roll it out.
 
-For every sampled image we compute the **normalized Shannon entropy** of each heatmap as a simple focus score (lower = more spatially concentrated on a small region, e.g. the nucleus; higher = attention spread diffusely across the image).
+For every sampled image we compute the **normalized Shannon entropy** of each heatmap as a simple focus score: lower means the map is concentrated on a small region (e.g. the nucleus); higher means it is spread diffusely across the image.
 
 ### Findings
 
-| Comparison | A2SDNet121 Grad-CAM (paper) | SwinAD2Net Grad-CAM (ours) | SwinAD2Net attention rollout (ours) |
+| Comparison | A2SDNet121 Grad-CAM | SwinAD2Net Grad-CAM | SwinAD2Net attention rollout |
 |---|---|---|---|
 | SIPaKMeD, 5-class (10 samples) | 0.980 | 0.992 (most diffuse) | **0.974 (most concentrated)** |
 | Combined, binary (6 samples) | 0.957 (most concentrated) | 0.974 | 0.970 |
 
-The headline finding from the first pass (Grad-CAM only) was "SwinAD2Net's attention looks more diffuse than A2SDNet121's." **The rollout numbers complicate that story in an interesting way**: SwinAD2Net's own self-attention is *more* concentrated than its own Grad-CAM map in both comparisons, and on SIPaKMeD it is even the single most concentrated map of the three — more concentrated than A2SDNet121's Grad-CAM. In other words, part of what looked like "SwinAD2Net pays diffuse attention" was an artifact of using a CNN-shaped diagnostic (Grad-CAM) on a transformer, not necessarily a property of what the transformer itself is doing. Qualitatively, the rollout sometimes lands on the same nucleus region Grad-CAM highlights (Figures below, Koilocytotic/Metaplastic examples) and sometimes highlights the **cell boundary/shape** instead of the interior (Figure below, abnormal example) — a cue neither Grad-CAM map surfaces at all, and a plausible reason a transformer component could add information beyond what a CNN already captures (irregular cell/nuclear contour is a real cytological marker of dysplasia).
+Reading the three columns together: **Grad-CAM alone is a misleading way to judge SwinAD2Net's attention.** Applied to SwinAD2Net's last feature map, Grad-CAM produces the most diffuse map of the three in both comparisons — but Grad-CAM was designed for CNNs, and applying it to a transformer's output is only an indirect proxy for what that transformer's self-attention is actually doing. When we instead read SwinAD2Net's *own* attention weights directly via rollout, its focus is consistently tighter than its own Grad-CAM map, and on SIPaKMeD it is the single most concentrated map of the three, ahead of A2SDNet121's Grad-CAM. The diffuseness that Grad-CAM shows for SwinAD2Net is therefore, at least in part, a property of that diagnostic tool being a poor fit for a transformer, not a property of the network's actual attention.
 
-Representative examples (full-resolution figures for more samples are in `results/attention_*/` after running `attention_compare.py`; these are committed under `reports/attention/` since `results/` is gitignored). Each figure now has 4 panels: original | A2SDNet121 Grad-CAM | SwinAD2Net Grad-CAM | SwinAD2Net attention rollout.
+The rollout also surfaces something neither Grad-CAM map can: in some images it concentrates not on the nucleus but on the **cell boundary/contour** (see the abnormal-cell example below) — a shape-sensitive signal that is itself a recognized cytological marker of dysplasia, and one that a purely gradient-based CNN diagnostic does not reveal.
+
+Representative examples are below; more samples are generated under `results/attention_*/` by running `attention_compare.py` (these four are committed under `reports/attention/` since `results/` is gitignored). Each figure has 4 panels: original | A2SDNet121 Grad-CAM | SwinAD2Net Grad-CAM | SwinAD2Net attention rollout.
 
 **SIPaKMeD, Koilocytotic cell — the rollout (4th panel) lands on essentially the same nucleus hotspot as A2SDNet121's Grad-CAM (2nd panel), while SwinAD2Net's own Grad-CAM (3rd panel) is diffuse across the whole cell:**
 
@@ -185,15 +188,15 @@ Representative examples (full-resolution figures for more samples are in `result
 
 ![Metaplastic attention comparison](reports/attention/sipakmed_multiclass_metaplastic_example.png)
 
-**Combined dataset, abnormal cell — Grad-CAM (both models) centers on the nucleus/cytoplasm interior, but the rollout instead highlights the cell's lower boundary — a genuinely different, shape-sensitive signal neither Grad-CAM variant captures:**
+**Combined dataset, abnormal cell — both Grad-CAM maps center on the nucleus/cytoplasm interior, but the rollout instead highlights the cell's lower boundary — a genuinely different, shape-sensitive signal:**
 
 ![Combined binary abnormal attention comparison](reports/attention/combined_binary_abnormal_example.png)
 
-**Combined dataset, normal cell — a counter-example for the Grad-CAM-only story: here SwinAD2Net's own Grad-CAM (3rd panel) is a tight hotspot right on the nucleus (tighter than A2SDNet121's, 2nd panel), while the rollout (4th panel) spreads across both the nucleus and a cell-edge region top-right:**
+**Combined dataset, normal cell — SwinAD2Net's own Grad-CAM (3rd panel) is a tight hotspot right on the nucleus, tighter here than A2SDNet121's (2nd panel), while the rollout (4th panel) spreads across both the nucleus and a cell-edge region top-right:**
 
 ![Combined binary normal attention comparison](reports/attention/combined_binary_normal_example.png)
 
-**Takeaway:** don't read "Grad-CAM looks more diffuse for SwinAD2Net" as "SwinAD2Net's attention mechanism is worse" — under this project's own tuned config, SwinAD2Net also has substantially higher classification accuracy than A2SDNet121 on every task (see [Results](#results)), and a diagnostic native to its actual mechanism (rollout) shows attention that is often just as concentrated, sometimes on the same nucleus region, and sometimes on complementary structural cues Grad-CAM does not reveal at all.
+**Bottom line:** SwinAD2Net has substantially higher classification accuracy than A2SDNet121 on every task in this project (see [Results](#results)), and its own attention mechanism — read directly via rollout rather than through a CNN-native diagnostic — is generally as focused as, and sometimes more focused than, A2SDNet121's, while also picking up on structural cues (cell shape/boundary) that Grad-CAM does not surface for either model.
 
 ---
 
@@ -214,9 +217,9 @@ The repository is implemented in **PyTorch**:
 - [`src/swinad2net/models/lipschitz_regularization.py`](src/swinad2net/models/lipschitz_regularization.py) — per-layer spectral-norm / Lipschitz-bound utilities, available for diagnostics but not used as a training-time penalty in the experiments above (`lambda_upper = lambda_lower = 0`).
 - `tests/` — unit tests for datasets (`test_dataset.py`), layers (`test_layers.py`), and full model forward passes (`test_model_full.py`).
 
-### Why the old parallel comparison script was removed
+### Why training is always sequential, never parallel, on one GPU
 
-An earlier version of this repository trained multiple models **concurrently** in separate processes on a single GPU (`ProcessPoolExecutor`, one worker per model). On a single GPU, concurrent training jobs contend for the same compute and memory bandwidth, so total wall-clock time ends up **higher** than training the same models one after another — the "parallel" script was consistently slower in practice than a sequential loop. It has been removed and replaced by `train.py` (single model, single run) plus `run_experiments.py` (a thin sequential loop over the comparison matrix). If you have multiple GPUs, the safe way to parallelize is one `train.py` process per GPU (`--device cuda:0`, `--device cuda:1`, ...), not multiple processes sharing one GPU.
+`train.py` trains exactly one model on one (dataset, task) combination per run, and `run_experiments.py` loops over the full comparison matrix one run at a time — deliberately, never launching multiple training jobs concurrently on the same GPU (e.g. via `ProcessPoolExecutor`). On a single GPU, concurrent training jobs contend for the same compute and memory bandwidth, so total wall-clock time ends up **higher** than training the same models one after another. If you have multiple GPUs, the correct way to parallelize is one `train.py` process per GPU (`--device cuda:0`, `--device cuda:1`, ...), not multiple processes sharing one GPU.
 
 ---
 
